@@ -1,0 +1,6 @@
+// Template for local signing settings.
+//
+// Copy this file to Signing.xcconfig (which is gitignored) and fill in your
+// own Apple Developer Team ID. Simulator builds work with it left empty;
+// a team is only required to run on a physical device.
+DEVELOPMENT_TEAM =

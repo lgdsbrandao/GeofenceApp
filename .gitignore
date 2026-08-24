@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# Generated at runtime by geofence_panel.py
+device_route.gpx
+device_play.log
+
+# Local signing (contains your Apple Team ID)
+Signing.xcconfig
+
+# Stale project dir Xcode may recreate from an old open window
+LocationMovement.xcodeproj/

@@ -1,0 +1,626 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 55;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		882D39C72F8599C90041FA89 /* update_fake_route_here.gpx in Resources */ = {isa = PBXBuildFile; fileRef = 882D39C62F8599C90041FA89 /* update_fake_route_here.gpx */; };
+		882D39C82F8599C90041FA89 /* update_fake_route_here.gpx in Resources */ = {isa = PBXBuildFile; fileRef = 882D39C62F8599C90041FA89 /* update_fake_route_here.gpx */; };
+		882D39C92F8599C90041FA89 /* update_fake_route_here.gpx in Resources */ = {isa = PBXBuildFile; fileRef = 882D39C62F8599C90041FA89 /* update_fake_route_here.gpx */; };
+		CB4C2CFA274F688900D51033 /* InsiderGeofenceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB4C2CF9274F688900D51033 /* InsiderGeofenceApp.swift */; };
+		CB4C2CFC274F688900D51033 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB4C2CFB274F688900D51033 /* ContentView.swift */; };
+		CB4C2CFE274F688A00D51033 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CB4C2CFD274F688A00D51033 /* Assets.xcassets */; };
+		CB4C2D01274F688A00D51033 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CB4C2D00274F688A00D51033 /* Preview Assets.xcassets */; };
+		CB4C2D0B274F688B00D51033 /* InsiderGeofenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB4C2D0A274F688B00D51033 /* InsiderGeofenceTests.swift */; };
+		CB4C2D15274F688B00D51033 /* InsiderGeofenceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB4C2D14274F688B00D51033 /* InsiderGeofenceUITests.swift */; };
+		CB4C2D17274F688B00D51033 /* InsiderGeofenceUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB4C2D16274F688B00D51033 /* InsiderGeofenceUITestsLaunchTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CB4C2D07274F688B00D51033 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CB4C2CEE274F688900D51033 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CB4C2CF5274F688900D51033;
+			remoteInfo = InsiderGeofence;
+		};
+		CB4C2D11274F688B00D51033 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CB4C2CEE274F688900D51033 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CB4C2CF5274F688900D51033;
+			remoteInfo = InsiderGeofence;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		1A2B3C4D5E6F708192A3B4C5 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		882D39C62F8599C90041FA89 /* update_fake_route_here.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = update_fake_route_here.gpx; sourceTree = "<group>"; };
+		CB4C2CF6274F688900D51033 /* InsiderGeofence.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = InsiderGeofence.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CB4C2CF9274F688900D51033 /* InsiderGeofenceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsiderGeofenceApp.swift; sourceTree = "<group>"; };
+		CB4C2CFB274F688900D51033 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		CB4C2CFD274F688A00D51033 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		CB4C2D00274F688A00D51033 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		CB4C2D06274F688B00D51033 /* InsiderGeofenceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = InsiderGeofenceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CB4C2D0A274F688B00D51033 /* InsiderGeofenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsiderGeofenceTests.swift; sourceTree = "<group>"; };
+		CB4C2D10274F688B00D51033 /* InsiderGeofenceUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = InsiderGeofenceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CB4C2D14274F688B00D51033 /* InsiderGeofenceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsiderGeofenceUITests.swift; sourceTree = "<group>"; };
+		CB4C2D16274F688B00D51033 /* InsiderGeofenceUITestsLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsiderGeofenceUITestsLaunchTests.swift; sourceTree = "<group>"; };
+		CB789C4E274F8608008D9DA7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		CB4C2CF3274F688900D51033 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CB4C2D03274F688B00D51033 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CB4C2D0D274F688B00D51033 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		CB4C2CED274F688900D51033 = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F708192A3B4C5 /* Signing.xcconfig */,
+				882D39C62F8599C90041FA89 /* update_fake_route_here.gpx */,
+				CB4C2CF8274F688900D51033 /* InsiderGeofence */,
+				CB4C2D09274F688B00D51033 /* InsiderGeofenceTests */,
+				CB4C2D13274F688B00D51033 /* InsiderGeofenceUITests */,
+				CB4C2CF7274F688900D51033 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CB4C2CF7274F688900D51033 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CB4C2CF6274F688900D51033 /* InsiderGeofence.app */,
+				CB4C2D06274F688B00D51033 /* InsiderGeofenceTests.xctest */,
+				CB4C2D10274F688B00D51033 /* InsiderGeofenceUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CB4C2CF8274F688900D51033 /* InsiderGeofence */ = {
+			isa = PBXGroup;
+			children = (
+				CB789C4E274F8608008D9DA7 /* Info.plist */,
+				CB4C2CF9274F688900D51033 /* InsiderGeofenceApp.swift */,
+				CB4C2CFB274F688900D51033 /* ContentView.swift */,
+				CB4C2CFD274F688A00D51033 /* Assets.xcassets */,
+				CB4C2CFF274F688A00D51033 /* Preview Content */,
+			);
+			path = InsiderGeofence;
+			sourceTree = "<group>";
+		};
+		CB4C2CFF274F688A00D51033 /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				CB4C2D00274F688A00D51033 /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		CB4C2D09274F688B00D51033 /* InsiderGeofenceTests */ = {
+			isa = PBXGroup;
+			children = (
+				CB4C2D0A274F688B00D51033 /* InsiderGeofenceTests.swift */,
+			);
+			path = InsiderGeofenceTests;
+			sourceTree = "<group>";
+		};
+		CB4C2D13274F688B00D51033 /* InsiderGeofenceUITests */ = {
+			isa = PBXGroup;
+			children = (
+				CB4C2D14274F688B00D51033 /* InsiderGeofenceUITests.swift */,
+				CB4C2D16274F688B00D51033 /* InsiderGeofenceUITestsLaunchTests.swift */,
+			);
+			path = InsiderGeofenceUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		CB4C2CF5274F688900D51033 /* InsiderGeofence */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CB4C2D1A274F688B00D51033 /* Build configuration list for PBXNativeTarget "InsiderGeofence" */;
+			buildPhases = (
+				CB4C2CF2274F688900D51033 /* Sources */,
+				CB4C2CF3274F688900D51033 /* Frameworks */,
+				CB4C2CF4274F688900D51033 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = InsiderGeofence;
+			productName = InsiderGeofence;
+			productReference = CB4C2CF6274F688900D51033 /* InsiderGeofence.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CB4C2D05274F688B00D51033 /* InsiderGeofenceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CB4C2D1D274F688B00D51033 /* Build configuration list for PBXNativeTarget "InsiderGeofenceTests" */;
+			buildPhases = (
+				CB4C2D02274F688B00D51033 /* Sources */,
+				CB4C2D03274F688B00D51033 /* Frameworks */,
+				CB4C2D04274F688B00D51033 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CB4C2D08274F688B00D51033 /* PBXTargetDependency */,
+			);
+			name = InsiderGeofenceTests;
+			productName = InsiderGeofenceTests;
+			productReference = CB4C2D06274F688B00D51033 /* InsiderGeofenceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		CB4C2D0F274F688B00D51033 /* InsiderGeofenceUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CB4C2D20274F688B00D51033 /* Build configuration list for PBXNativeTarget "InsiderGeofenceUITests" */;
+			buildPhases = (
+				CB4C2D0C274F688B00D51033 /* Sources */,
+				CB4C2D0D274F688B00D51033 /* Frameworks */,
+				CB4C2D0E274F688B00D51033 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CB4C2D12274F688B00D51033 /* PBXTargetDependency */,
+			);
+			name = InsiderGeofenceUITests;
+			productName = InsiderGeofenceUITests;
+			productReference = CB4C2D10274F688B00D51033 /* InsiderGeofenceUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		CB4C2CEE274F688900D51033 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1310;
+				LastUpgradeCheck = 1310;
+				TargetAttributes = {
+					CB4C2CF5274F688900D51033 = {
+						CreatedOnToolsVersion = 13.1;
+					};
+					CB4C2D05274F688B00D51033 = {
+						CreatedOnToolsVersion = 13.1;
+						TestTargetID = CB4C2CF5274F688900D51033;
+					};
+					CB4C2D0F274F688B00D51033 = {
+						CreatedOnToolsVersion = 13.1;
+						TestTargetID = CB4C2CF5274F688900D51033;
+					};
+				};
+			};
+			buildConfigurationList = CB4C2CF1274F688900D51033 /* Build configuration list for PBXProject "InsiderGeofence" */;
+			compatibilityVersion = "Xcode 13.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = CB4C2CED274F688900D51033;
+			productRefGroup = CB4C2CF7274F688900D51033 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CB4C2CF5274F688900D51033 /* InsiderGeofence */,
+				CB4C2D05274F688B00D51033 /* InsiderGeofenceTests */,
+				CB4C2D0F274F688B00D51033 /* InsiderGeofenceUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		CB4C2CF4274F688900D51033 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CB4C2D01274F688A00D51033 /* Preview Assets.xcassets in Resources */,
+				CB4C2CFE274F688A00D51033 /* Assets.xcassets in Resources */,
+				882D39C92F8599C90041FA89 /* update_fake_route_here.gpx in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CB4C2D04274F688B00D51033 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				882D39C72F8599C90041FA89 /* update_fake_route_here.gpx in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CB4C2D0E274F688B00D51033 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				882D39C82F8599C90041FA89 /* update_fake_route_here.gpx in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		CB4C2CF2274F688900D51033 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CB4C2CFC274F688900D51033 /* ContentView.swift in Sources */,
+				CB4C2CFA274F688900D51033 /* InsiderGeofenceApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CB4C2D02274F688B00D51033 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CB4C2D0B274F688B00D51033 /* InsiderGeofenceTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CB4C2D0C274F688B00D51033 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CB4C2D17274F688B00D51033 /* InsiderGeofenceUITestsLaunchTests.swift in Sources */,
+				CB4C2D15274F688B00D51033 /* InsiderGeofenceUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		CB4C2D08274F688B00D51033 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CB4C2CF5274F688900D51033 /* InsiderGeofence */;
+			targetProxy = CB4C2D07274F688B00D51033 /* PBXContainerItemProxy */;
+		};
+		CB4C2D12274F688B00D51033 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CB4C2CF5274F688900D51033 /* InsiderGeofence */;
+			targetProxy = CB4C2D11274F688B00D51033 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		CB4C2D18274F688B00D51033 /* Debug */ = {
+			baseConfigurationReference = 1A2B3C4D5E6F708192A3B4C5 /* Signing.xcconfig */;
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++17";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		CB4C2D19274F688B00D51033 /* Release */ = {
+			baseConfigurationReference = 1A2B3C4D5E6F708192A3B4C5 /* Signing.xcconfig */;
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++17";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		CB4C2D1B274F688B00D51033 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"InsiderGeofence/Preview Content\"";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = InsiderGeofence/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Insider Geofence";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "to keep app running";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lgsbrandao.InsiderGeofence01;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CB4C2D1C274F688B00D51033 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"InsiderGeofence/Preview Content\"";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = InsiderGeofence/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Insider Geofence";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "to keep app running";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lgsbrandao.InsiderGeofence01;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		CB4C2D1E274F688B00D51033 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lgsbrandao.InsiderGeofenceTests01;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/InsiderGeofence.app/InsiderGeofence";
+			};
+			name = Debug;
+		};
+		CB4C2D1F274F688B00D51033 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lgsbrandao.InsiderGeofenceTests01;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/InsiderGeofence.app/InsiderGeofence";
+			};
+			name = Release;
+		};
+		CB4C2D21274F688B00D51033 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lgsbrandao.InsiderGeofenceUITests01;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = InsiderGeofence;
+			};
+			name = Debug;
+		};
+		CB4C2D22274F688B00D51033 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lgsbrandao.InsiderGeofenceUITests01;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = InsiderGeofence;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		CB4C2CF1274F688900D51033 /* Build configuration list for PBXProject "InsiderGeofence" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB4C2D18274F688B00D51033 /* Debug */,
+				CB4C2D19274F688B00D51033 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CB4C2D1A274F688B00D51033 /* Build configuration list for PBXNativeTarget "InsiderGeofence" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB4C2D1B274F688B00D51033 /* Debug */,
+				CB4C2D1C274F688B00D51033 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CB4C2D1D274F688B00D51033 /* Build configuration list for PBXNativeTarget "InsiderGeofenceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB4C2D1E274F688B00D51033 /* Debug */,
+				CB4C2D1F274F688B00D51033 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CB4C2D20274F688B00D51033 /* Build configuration list for PBXNativeTarget "InsiderGeofenceUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB4C2D21274F688B00D51033 /* Debug */,
+				CB4C2D22274F688B00D51033 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = CB4C2CEE274F688900D51033 /* Project object */;
+}
