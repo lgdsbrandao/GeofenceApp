@@ -10,14 +10,34 @@ pymobiledevice3 is installed). When the position first crosses into the
 geofence zone — a circle of the given radius around the end location — it
 logs the entry and exposes it on /status for the app to display.
 
-Run it with:  python3 geofence_panel.py
+Run it with:  python3 geofence_panel.py          (loopback only)
+              python3 geofence_panel.py --lan    (also reachable from the LAN,
+                                                  needed for a physical iPhone)
 Stop it with: Ctrl+C
+
+Security model
+--------------
+* Binds 127.0.0.1 unless --lan is passed. Simulator work never needs --lan.
+* Every request must carry the shared token in the X-Geofence-Token header.
+  The token lives in .geofence_token (gitignored, mode 600) and is printed at
+  startup; type it into the app once. Requiring a *custom* header also forces
+  a CORS preflight, so a random web page cannot drive this server.
+* The Host header is validated, which blocks DNS-rebinding attacks.
+* Request bodies, route distance and radius are capped and sockets time out,
+  so a single request cannot exhaust memory, threads or CPU.
+
+Caveat: traffic is plain HTTP. With --lan, anyone sniffing that network can
+read the coordinates you send — including your real position if you use the
+"Go to original location" button. Avoid --lan on untrusted Wi-Fi.
 """
 
 import functools
+import hmac
 import importlib.util
+import ipaddress
 import json
 import math
+import secrets
 import subprocess
 import sys
 import os
@@ -29,13 +49,20 @@ from pathlib import Path
 
 print = functools.partial(print, flush=True)
 
+HERE = Path(__file__).resolve().parent
 PORT = 8766
-GPX_PATH = Path(__file__).resolve().parent / "update_fake_route_here.gpx"
-DEVICE_GPX_PATH = Path(__file__).resolve().parent / "device_route.gpx"
-DEVICE_PLAY_LOG = Path(__file__).resolve().parent / "device_play.log"
+GPX_PATH = HERE / "update_fake_route_here.gpx"
+DEVICE_GPX_PATH = HERE / "device_route.gpx"
+DEVICE_PLAY_LOG = HERE / "device_play.log"
+TOKEN_PATH = HERE / ".geofence_token"
 DEVELOPER_DIR = "/Applications/Xcode.app"
-WALK_SPEED = 1.4      # m/s, normal walking pace
+WALK_SPEED = 1.4          # m/s, normal walking pace
 TICK_SECONDS = 1.0
+MAX_BODY_BYTES = 8 * 1024
+MAX_ROUTE_M = 100_000     # 100 km; anything longer is almost always a typo
+MAX_RADIUS_M = 100_000
+SOCKET_TIMEOUT = 10       # seconds; stops slow clients from pinning threads
+LAN_MODE = "--lan" in sys.argv
 HAS_PMD3 = importlib.util.find_spec("pymobiledevice3") is not None
 
 GPX_TEMPLATE = """<?xml version="1.0"?>
@@ -48,6 +75,24 @@ GPX_TEMPLATE = """<?xml version="1.0"?>
 </wpt>
 </gpx>
 """
+
+
+def load_token():
+    """Stable shared secret: env var if set, otherwise a file we create once."""
+    env = os.environ.get("GEOFENCE_TOKEN", "").strip()
+    if env:
+        return env
+    if TOKEN_PATH.exists():
+        existing = TOKEN_PATH.read_text().strip()
+        if existing:
+            return existing
+    token = secrets.token_urlsafe(18)
+    TOKEN_PATH.write_text(token + "\n")
+    TOKEN_PATH.chmod(0o600)
+    return token
+
+
+TOKEN = load_token()
 
 
 def haversine_m(lat1, lon1, lat2, lon2):
@@ -118,6 +163,7 @@ def apply_position(lat, lon, quiet=True):
 
 
 DEVICE_PLAY_PROC = None
+DEVICE_LOCK = threading.Lock()
 
 
 def write_device_gpx(lat1, lon1, lat2, lon2):
@@ -151,17 +197,20 @@ def start_device_play(lat1, lon1, lat2, lon2):
     global DEVICE_PLAY_PROC
     if not HAS_PMD3:
         return "pymobiledevice3 not installed — device skipped"
-    if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
-        DEVICE_PLAY_PROC.terminate()
     write_device_gpx(lat1, lon1, lat2, lon2)
-    log = DEVICE_PLAY_LOG.open("w")
-    DEVICE_PLAY_PROC = subprocess.Popen(
-        [sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
-         "simulate-location", "play", str(DEVICE_GPX_PATH), "--tunnel", ""],
-        stdout=log, stderr=log,
-    )
+    with DEVICE_LOCK:
+        if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
+            DEVICE_PLAY_PROC.terminate()
+        with DEVICE_PLAY_LOG.open("w") as log:
+            DEVICE_PLAY_PROC = subprocess.Popen(
+                [sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
+                 "simulate-location", "play", str(DEVICE_GPX_PATH),
+                 "--tunnel", ""],
+                stdout=log, stderr=log,
+            )
+        proc = DEVICE_PLAY_PROC
     time.sleep(3)
-    if DEVICE_PLAY_PROC.poll() is not None:
+    if proc.poll() is not None:
         hint = DEVICE_PLAY_LOG.read_text().strip().splitlines()
         hint = hint[-1] if hint else "unknown error"
         print("  device: play exited immediately — is the iPhone plugged in and "
@@ -262,12 +311,13 @@ def stop_all():
     STATE.cancel.set()
     if STATE.thread and STATE.thread.is_alive():
         STATE.thread.join(timeout=TICK_SECONDS + 5)
-    if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
-        DEVICE_PLAY_PROC.terminate()
-        DEVICE_PLAY_PROC = None
+    with DEVICE_LOCK:
+        if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
+            DEVICE_PLAY_PROC.terminate()
+            DEVICE_PLAY_PROC = None
     env = dict(os.environ, DEVELOPER_DIR=DEVELOPER_DIR)
     for udid in booted_udids():
-        code, output = run(["xcrun", "simctl", "location", udid, "clear"], env=env)
+        code, _ = run(["xcrun", "simctl", "location", udid, "clear"], env=env)
         if code == 0:
             print(f"  simulator {udid[:8]}: fake location cleared")
     if HAS_PMD3:
@@ -288,28 +338,72 @@ def stop_all():
     print("  Fake location stopped." + (" (walk cancelled)" if walking else ""))
 
 
+def host_allowed(header):
+    """Anti-DNS-rebinding check.
+
+    A rebinding attack keeps the attacker's own domain in the Host header, so
+    accepting only localhost (plus private IP literals in --lan mode) means a
+    rebound request is refused even though it reaches our socket.
+    """
+    if not header:
+        return False
+    host = header.rsplit(":", 1)[0].strip("[]").lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    if not LAN_MODE:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return host.endswith(".local")
+
+
 class Handler(BaseHTTPRequestHandler):
+    timeout = SOCKET_TIMEOUT
+
     def log_message(self, fmt, *args):
-        if "/status" not in (args[0] if args else ""):
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {fmt % args}")
+        # The request line is attacker-controlled, so escape it before printing:
+        # otherwise a crafted request can write raw terminal escape sequences
+        # to the console and rewrite what you see.
+        safe = (fmt % args).encode("unicode_escape").decode("ascii", "replace")
+        if "/status" not in safe:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {safe}")
 
     def send_json(self, status, payload):
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
+    def gate(self):
+        """Checks every request must pass. Returns True when allowed."""
+        if not host_allowed(self.headers.get("Host", "")):
+            self.send_json(403, {"ok": False, "error": "host not allowed"})
+            return False
+        supplied = self.headers.get("X-Geofence-Token", "")
+        if not hmac.compare_digest(supplied, TOKEN):
+            self.send_json(401, {
+                "ok": False,
+                "error": "unauthorized — copy the token geofence_panel.py "
+                         "printed at startup into the app's Token field",
+            })
+            return False
+        return True
+
     def do_GET(self):
-        if self.path == "/status":
+        if not self.gate():
+            return
+        if self.path in ("/status", "/"):
             self.send_json(200, {"ok": True, **STATE.snapshot()})
             return
-        gpx = GPX_PATH.read_text() if GPX_PATH.exists() else "(missing)"
-        self.send_json(200, {"ok": True, "gpx_path": str(GPX_PATH), "gpx": gpx,
-                             **STATE.snapshot()})
+        self.send_json(404, {"ok": False, "error": "unknown endpoint"})
 
     def do_POST(self):
+        if not self.gate():
+            return
         if self.path == "/stop":
             stop_all()
             self.send_json(200, {"ok": True, "stopped": True})
@@ -317,22 +411,45 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/update":
             self.send_json(404, {"ok": False, "error": "unknown endpoint"})
             return
+
+        ctype = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self.send_json(415, {"ok": False,
+                                 "error": "Content-Type must be application/json"})
+            return
         try:
-            length = int(self.headers.get("Content-Length", 0))
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self.send_json(411, {"ok": False, "error": "Content-Length required"})
+            return
+        if length < 0 or length > MAX_BODY_BYTES:
+            # Refuse before reading, so a huge claimed body costs us nothing.
+            self.send_json(413, {"ok": False, "error": "request body too large"})
+            return
+
+        try:
             data = json.loads(self.rfile.read(length))
             lat1, lon1 = float(data["start_lat"]), float(data["start_lon"])
             lat2, lon2 = float(data["end_lat"]), float(data["end_lon"])
             radius = float(data["radius"])
+            # isfinite matters: float("nan") parses fine, and every comparison
+            # against NaN is False, which would silently disable zone entry.
+            for value in (lat1, lon1, lat2, lon2, radius):
+                if not math.isfinite(value):
+                    raise ValueError("values must be finite numbers")
             for lat, lon in ((lat1, lon1), (lat2, lon2)):
                 if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                     raise ValueError("coordinates out of range")
-            if radius <= 0:
-                raise ValueError("radius must be positive")
+            if not 0 < radius <= MAX_RADIUS_M:
+                raise ValueError(f"radius must be between 0 and {MAX_RADIUS_M} m")
+            total = haversine_m(lat1, lon1, lat2, lon2)
+            if total > MAX_ROUTE_M:
+                raise ValueError(f"route is {total / 1000:.0f} km; the limit is "
+                                 f"{MAX_ROUTE_M // 1000} km")
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             self.send_json(400, {"ok": False, "error": f"bad request: {exc}"})
             return
 
-        total = haversine_m(lat1, lon1, lat2, lon2)
         duration = total / WALK_SPEED
         write_gpx(lat1, lon1, lat2, lon2, duration)
         print(f"  GPX updated: {lat1},{lon1} -> {lat2},{lon2} "
@@ -352,11 +469,21 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    print(f"Geofence panel helper on http://0.0.0.0:{PORT}")
+    bind = "0.0.0.0" if LAN_MODE else "127.0.0.1"
+    print(f"Geofence panel helper on http://{bind}:{PORT}")
     print(f"GPX file: {GPX_PATH}")
     print(f"Walk speed: {WALK_SPEED} m/s")
+    print()
+    print(f"  TOKEN: {TOKEN}")
+    print("  Paste this into the app's Token field (saved in .geofence_token).")
+    if LAN_MODE:
+        print("  --lan: reachable from your local network. Traffic is plain "
+              "HTTP, so avoid this on untrusted Wi-Fi.")
+    else:
+        print("  Loopback only. Pass --lan to test on a physical iPhone.")
+    print()
     print("Waiting for 'Update geofence' from the app... (Ctrl+C to stop)")
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    server = ThreadingHTTPServer((bind, PORT), Handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

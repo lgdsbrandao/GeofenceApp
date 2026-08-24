@@ -40,6 +40,7 @@ struct ContentView: View {
     #else
     @AppStorage("helperHost") private var helperHost: String = ""
     #endif
+    @AppStorage("helperToken") private var helperToken: String = ""
     @State private var statusMessage: String = ""
     @State private var statusIsError: Bool = false
     @State private var isSending: Bool = false
@@ -129,6 +130,17 @@ struct ContentView: View {
                 }
                 Spacer()
                 fieldBox($helperHost, placeholder: "192.168.x.x", keyboard: .URL)
+                    .frame(width: 180)
+            }
+            Divider()
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "key.fill")
+                        .foregroundColor(.blue)
+                    Text("Token").font(.subheadline.bold())
+                }
+                Spacer()
+                fieldBox($helperToken, placeholder: "from helper startup", keyboard: .asciiCapable)
                     .frame(width: 180)
             }
         }
@@ -269,6 +281,7 @@ struct ContentView: View {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
         request.timeoutInterval = 15
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
             "start_lat": startLat, "start_lon": startLon,
@@ -302,11 +315,20 @@ struct ContentView: View {
 
     private func pollStatus(host: String) {
         guard isWalking, let url = URL(string: "http://\(host):8766/status") else { return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
+        var request = URLRequest(url: url)
+        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
+        request.timeoutInterval = 15
+        URLSession.shared.dataTask(with: request) { data, _, _ in
             DispatchQueue.main.async {
                 guard isWalking else { return }
                 if let data = data,
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    guard json["ok"] as? Bool == true else {
+                        isWalking = false
+                        showStatus(json["error"] as? String ?? "Helper rejected the status request.",
+                                   isError: true)
+                        return
+                    }
                     let walking = json["walking"] as? Bool ?? false
                     let entered = json["entered"] as? Bool ?? false
                     let remaining = json["remaining_m"] as? Double ?? 0

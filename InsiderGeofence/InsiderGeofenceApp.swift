@@ -9,22 +9,15 @@ import SwiftUI
 import UIKit
 import CoreLocation
 
-//@UIApplicationMain
-class InsiderGeofenceAppDelegate: UIResponder, UIApplicationDelegate, CLLocationManagerDelegate {
-    
+// Location is requested by OriginalLocationTracker in ContentView, which asks
+// for when-in-use access and stops as soon as it has one fix. The fake
+// location itself is injected by the Mac helper (simctl / pymobiledevice3),
+// so the app never needs Always authorization or background updates.
+class InsiderGeofenceAppDelegate: UIResponder, UIApplicationDelegate {
+
     var window: UIWindow?
-    let locationManager = CLLocationManager()
-    
-    func location() {
-        locationManager.delegate = self
-        locationManager.allowsBackgroundLocationUpdates = true
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.requestAlwaysAuthorization()
-        locationManager.startUpdatingLocation()
-    }
-    
+
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        location()
         return true
     }
 }

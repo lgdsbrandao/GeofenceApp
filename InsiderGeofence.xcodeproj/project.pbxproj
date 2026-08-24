@@ -437,7 +437,6 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = InsiderGeofence/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Insider Geofence";
-				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "to keep app running";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -469,7 +468,6 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = InsiderGeofence/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Insider Geofence";
-				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "to keep app running";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
