@@ -50,6 +50,14 @@ struct ContentView: View {
         span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
     )
     @State private var mapTrackingMode: MapUserTrackingMode = .follow
+    @State private var showSettings: Bool = false
+    @State private var authFailed: Bool = false
+
+    /// The token is a set-once value, so it stays hidden unless it is still
+    /// missing, the helper rejected it, or you open settings to change it.
+    private var showsTokenField: Bool {
+        showSettings || authFailed || helperToken.isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -68,12 +76,21 @@ struct ContentView: View {
     // MARK: - Sections
 
     private var header: some View {
-        VStack(spacing: 2) {
-            Text("Geofence Panel")
-                .font(.headline)
-            Text("Walks start → end at ~1.4 m/s and reports zone entry.")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+        ZStack(alignment: .trailing) {
+            VStack(spacing: 2) {
+                Text("Geofence Panel")
+                    .font(.headline)
+                Text("Walks start → end at ~1.4 m/s and reports zone entry.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+
+            Button(action: { withAnimation { showSettings.toggle() } }) {
+                Image(systemName: showSettings ? "gearshape.fill" : "gearshape")
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 12)
+            }
         }
     }
 
@@ -132,16 +149,18 @@ struct ContentView: View {
                 fieldBox($helperHost, placeholder: "192.168.x.x", keyboard: .URL)
                     .frame(width: 180)
             }
-            Divider()
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "key.fill")
-                        .foregroundColor(.blue)
-                    Text("Token").font(.subheadline.bold())
+            if showsTokenField {
+                Divider()
+                HStack {
+                    HStack(spacing: 6) {
+                        Image(systemName: "key.fill")
+                            .foregroundColor(authFailed ? .red : .blue)
+                        Text("Token").font(.subheadline.bold())
+                    }
+                    Spacer()
+                    fieldBox($helperToken, placeholder: "from helper startup", keyboard: .asciiCapable)
+                        .frame(width: 180)
                 }
-                Spacer()
-                fieldBox($helperToken, placeholder: "from helper startup", keyboard: .asciiCapable)
-                    .frame(width: 180)
             }
         }
         .padding(12)
@@ -291,7 +310,7 @@ struct ContentView: View {
 
         isSending = true
         statusMessage = ""
-        URLSession.shared.dataTask(with: request) { data, _, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 isSending = false
                 if let error = error {
@@ -304,9 +323,11 @@ struct ContentView: View {
                     return
                 }
                 if json["ok"] as? Bool == true {
+                    authFailed = false
                     onSuccess(json["distance_m"] as? Int ?? 0,
                               json["duration_s"] as? Int ?? 0)
                 } else {
+                    noteAuthFailure(response)
                     showStatus(json["error"] as? String ?? "Helper reported an error.", isError: true)
                 }
             }
@@ -318,13 +339,14 @@ struct ContentView: View {
         var request = URLRequest(url: url)
         request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
         request.timeoutInterval = 15
-        URLSession.shared.dataTask(with: request) { data, _, _ in
+        URLSession.shared.dataTask(with: request) { data, response, _ in
             DispatchQueue.main.async {
                 guard isWalking else { return }
                 if let data = data,
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     guard json["ok"] as? Bool == true else {
                         isWalking = false
+                        noteAuthFailure(response)
                         showStatus(json["error"] as? String ?? "Helper rejected the status request.",
                                    isError: true)
                         return
@@ -352,6 +374,13 @@ struct ContentView: View {
                 }
             }
         }.resume()
+    }
+
+    /// Reveal the token field again when the helper says the token is wrong.
+    private func noteAuthFailure(_ response: URLResponse?) {
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            withAnimation { authFailed = true }
+        }
     }
 
     private func parse(_ text: String, range: ClosedRange<Double>) -> Double? {
