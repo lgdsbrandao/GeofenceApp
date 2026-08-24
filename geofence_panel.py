@@ -23,8 +23,9 @@ Security model
   startup; type it into the app once. Requiring a *custom* header also forces
   a CORS preflight, so a random web page cannot drive this server.
 * The Host header is validated, which blocks DNS-rebinding attacks.
-* Request bodies, route distance and radius are capped and sockets time out,
-  so a single request cannot exhaust memory, threads or CPU.
+* Request bodies, interpolation steps and radius are capped and sockets time
+  out, so a single request cannot exhaust memory, threads or CPU. Distance
+  itself is not limited — long routes are compressed, see route_steps().
 
 Caveat: traffic is plain HTTP. With --lan, anyone sniffing that network can
 read the coordinates you send — including your real position if you use the
@@ -59,7 +60,7 @@ DEVELOPER_DIR = "/Applications/Xcode.app"
 WALK_SPEED = 1.4          # m/s, normal walking pace
 TICK_SECONDS = 1.0
 MAX_BODY_BYTES = 8 * 1024
-MAX_ROUTE_M = 100_000     # 100 km; anything longer is almost always a typo
+MAX_STEPS = 600           # bounds memory/CPU per request; see route_steps()
 MAX_RADIUS_M = 100_000
 SOCKET_TIMEOUT = 10       # seconds; stops slow clients from pinning threads
 LAN_MODE = "--lan" in sys.argv
@@ -102,6 +103,19 @@ def haversine_m(lat1, lon1, lat2, lon2):
     dl = math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
+
+
+def route_steps(total_m):
+    """How many one-second ticks to split a route into.
+
+    Short routes keep a true 1.4 m/s walking pace. Longer ones are compressed
+    into MAX_STEPS ticks (bigger jumps per tick) rather than being refused:
+    that keeps intercontinental routes usable while still bounding what one
+    request can cost us, since memory and subprocess count scale with steps,
+    not with distance. For an instant jump, set the start equal to the end.
+    """
+    natural = max(int(total_m / (WALK_SPEED * TICK_SECONDS)), 1)
+    return min(natural, MAX_STEPS)
 
 
 def write_gpx(lat1, lon1, lat2, lon2, duration_s):
@@ -169,7 +183,7 @@ DEVICE_LOCK = threading.Lock()
 def write_device_gpx(lat1, lon1, lat2, lon2):
     """Per-second track GPX for pymobiledevice3 `simulate-location play`."""
     total = haversine_m(lat1, lon1, lat2, lon2)
-    steps = max(int(total / (WALK_SPEED * TICK_SECONDS)), 1)
+    steps = route_steps(total)
     t0 = datetime.now(timezone.utc)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
     points = []
@@ -259,7 +273,7 @@ STATE = WalkState()
 
 def walk(lat1, lon1, lat2, lon2, radius, cancel):
     total = haversine_m(lat1, lon1, lat2, lon2)
-    steps = max(int(total / (WALK_SPEED * TICK_SECONDS)), 1)
+    steps = route_steps(total)
     print(f"  Walk started: {total:.0f}m in ~{steps * TICK_SECONDS:.0f}s, "
           f"zone radius {radius:.0f}m around destination")
 
@@ -443,17 +457,17 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < radius <= MAX_RADIUS_M:
                 raise ValueError(f"radius must be between 0 and {MAX_RADIUS_M} m")
             total = haversine_m(lat1, lon1, lat2, lon2)
-            if total > MAX_ROUTE_M:
-                raise ValueError(f"route is {total / 1000:.0f} km; the limit is "
-                                 f"{MAX_ROUTE_M // 1000} km")
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             self.send_json(400, {"ok": False, "error": f"bad request: {exc}"})
             return
 
-        duration = total / WALK_SPEED
+        steps = route_steps(total)
+        duration = steps * TICK_SECONDS
+        speed = total / duration if duration else 0.0
         write_gpx(lat1, lon1, lat2, lon2, duration)
         print(f"  GPX updated: {lat1},{lon1} -> {lat2},{lon2} "
-              f"({total:.0f}m, ~{duration:.0f}s walk, zone {radius:.0f}m)")
+              f"({total:.0f}m, ~{duration:.0f}s at {speed:.1f} m/s, "
+              f"zone {radius:.0f}m)")
         start_walk(lat1, lon1, lat2, lon2, radius)
         threading.Thread(
             target=lambda: STATE.set_device(
@@ -464,7 +478,10 @@ class Handler(BaseHTTPRequestHandler):
             "ok": True,
             "distance_m": round(total),
             "duration_s": round(duration),
-            "applied": f"walking {total:.0f}m, ~{duration:.0f}s",
+            "applied": (f"walking {total / 1000:.0f}km, ~{duration:.0f}s "
+                        f"at {speed:.0f} m/s (compressed)"
+                        if speed > WALK_SPEED * 1.05 else
+                        f"walking {total:.0f}m, ~{duration:.0f}s"),
         })
 
 
