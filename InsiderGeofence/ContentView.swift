@@ -33,10 +33,10 @@ private let runSpeedMps = walkSpeedMps * 2
 
 struct ContentView: View {
     @StateObject private var originalTracker = OriginalLocationTracker()
-    @State private var startLatitude: String = "-23.639772"
-    @State private var startLongitude: String = "-46.722718"
-    @State private var endLatitude: String = "-23.533976"
-    @State private var endLongitude: String = "-46.578507"
+    @State private var startLatitude: String = "-23.639687"
+    @State private var startLongitude: String = "-46.722662"
+    @State private var endLatitude: String = "-23.638739"
+    @State private var endLongitude: String = "-46.721797"
     @State private var zoneRadius: String = "100"
     #if targetEnvironment(simulator)
     @AppStorage("helperHost") private var helperHost: String = "localhost"
