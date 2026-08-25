@@ -80,6 +80,8 @@ struct ContentView: View {
     @State private var zones: [InsiderZone] = []
     @State private var isLoadingZones: Bool = false
     @State private var showZoneList: Bool = false
+    /// Set when a zone is picked from the API list; drives the round trip.
+    @State private var selectedZone: InsiderZone?
     @State private var authFailed: Bool = false
 
     /// The token is a set-once value, so it stays hidden unless it is still
@@ -363,7 +365,8 @@ struct ContentView: View {
         runMode = running
         sendRoute(startLat: startLat, startLon: startLon,
                   endLat: endLat, endLon: endLon, radius: radius,
-                  speed: running ? runSpeedMps : walkSpeedMps) { distance, duration in
+                  speed: running ? runSpeedMps : walkSpeedMps,
+                  returnToStart: selectedZone != nil) { distance, duration in
             isWalking = true
             isPaused = false
             let verb = running ? "Run" : "Walk"
@@ -412,7 +415,8 @@ struct ContentView: View {
         isWalking = false
         sendRoute(startLat: original.latitude, startLon: original.longitude,
                   endLat: original.latitude, endLon: original.longitude,
-                  radius: radius, speed: walkSpeedMps) { _, _ in
+                  radius: radius, speed: walkSpeedMps,
+                  returnToStart: false) { _, _ in
             showStatus(String(format: "Back at original location (%.6f, %.6f).",
                               original.latitude, original.longitude), isError: false)
         }
@@ -420,7 +424,7 @@ struct ContentView: View {
 
     private func sendRoute(startLat: Double, startLon: Double,
                            endLat: Double, endLon: Double, radius: Double,
-                           speed: Double,
+                           speed: Double, returnToStart: Bool,
                            onSuccess: @escaping (Int, Int) -> Void) {
         let host = helperHost.trimmingCharacters(in: .whitespaces)
         guard let url = URL(string: "http://\(host):8766/update") else {
@@ -436,6 +440,7 @@ struct ContentView: View {
             "start_lat": startLat, "start_lon": startLon,
             "end_lat": endLat, "end_lon": endLon,
             "radius": radius, "speed": speed,
+            "return_to_start": returnToStart,
         ])
 
         isSending = true
@@ -486,11 +491,15 @@ struct ContentView: View {
                     let remaining = json["remaining_m"] as? Double ?? 0
                     let device = (json["device"] as? String).map { "\niPhone: \($0)" } ?? ""
                     isPaused = json["paused"] as? Bool ?? false
+                    let exited = json["exited"] as? Bool ?? false
+                    let leg = json["leg"] as? String ?? "out"
                     if walking {
                         if isPaused {
                             showStatus("Paused — \(Int(remaining))m to destination. Tap ▶ to continue.\(device)", isError: false)
+                        } else if exited {
+                            showStatus("🎯 Entered, then ✅ EXITED the zone — heading back, \(Int(remaining))m from centre.\(device)", isError: false)
                         } else if entered {
-                            showStatus("🎯 Entered the geofence zone! Still walking — \(Int(remaining))m to destination.\(device)", isError: false)
+                            showStatus("🎯 Entered the zone! \(Int(remaining))m from centre, leg: \(leg).\(device)", isError: false)
                         } else {
                             showStatus("\(runMode ? "Running" : "Walking")… \(Int(remaining))m to destination.\(device)", isError: false)
                         }
@@ -498,8 +507,9 @@ struct ContentView: View {
                         isWalking = false
                         isPaused = false
                         showStatus(entered
-                                   ? "🎯 Arrived — geofence zone entered."
-                                   : "Walk finished (zone never entered).", isError: false)
+                                   ? (exited ? "✅ Done — entered and exited the zone."
+                                             : "🎯 Done — entered the zone (no exit recorded).")
+                                   : "Finished, but the zone was never entered.", isError: false)
                         return
                     }
                 }
@@ -560,17 +570,29 @@ struct ContentView: View {
         }.resume()
     }
 
-    /// Load a zone into the End fields so a walk can cross into it.
+    /// Build the full enter/exit test for a zone: start 50 m outside the
+    /// boundary, walk to the centre, then return to the start. Crossing the
+    /// boundary in both directions is what produces enter *and* exit events.
     private func use(_ zone: InsiderZone) {
+        let outsideBy = 50.0
+        // Offset due north; 1 degree of latitude is ~111,320 m everywhere.
+        let offsetDegrees = (zone.radius + outsideBy) / 111_320.0
+
+        startLatitude = String(zone.latitude + offsetDegrees)
+        startLongitude = String(zone.longitude)
         endLatitude = String(zone.latitude)
         endLongitude = String(zone.longitude)
         zoneRadius = String(format: "%.0f", zone.radius)
+        selectedZone = zone
+
         mapRegion = MKCoordinateRegion(
             center: zone.coordinate,
             span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
         mapTrackingMode = .none
         showZoneList = false
-        showStatus("Target set to \(zone.identifier) (r \(Int(zone.radius))m).", isError: false)
+        showStatus("\(zone.identifier): start \(Int(zone.radius + outsideBy))m out, "
+                   + "in to the centre and back. Radius \(Int(zone.radius))m.",
+                   isError: false)
     }
 
     private func parse(_ text: String, range: ClosedRange<Double>) -> Double? {
