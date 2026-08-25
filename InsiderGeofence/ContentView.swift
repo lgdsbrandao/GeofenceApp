@@ -56,6 +56,7 @@ struct ContentView: View {
     @State private var showSettings: Bool = false
     /// Which pace the in-flight or active route is using.
     @State private var runMode: Bool = false
+    @State private var isPaused: Bool = false
     @State private var authFailed: Bool = false
 
     /// The token is a set-once value, so it stays hidden unless it is still
@@ -180,6 +181,17 @@ struct ContentView: View {
                            color: .blue, isRun: false)
                 paceButton(title: "Run", icon: "figure.run",
                            color: .orange, isRun: true)
+                if isWalking {
+                    Button(action: togglePause) {
+                        Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                            .frame(width: 46)
+                            .padding(.vertical, 12)
+                    }
+                    .background(isPaused ? Color.green : Color.red)
+                    .foregroundColor(.white)
+                    .cornerRadius(14)
+                    .disabled(isSending)
+                }
             }
 
             Button(action: goToOriginalLocation) {
@@ -290,10 +302,45 @@ struct ContentView: View {
                   endLat: endLat, endLon: endLon, radius: radius,
                   speed: running ? runSpeedMps : walkSpeedMps) { distance, duration in
             isWalking = true
+            isPaused = false
             let verb = running ? "Run" : "Walk"
             showStatus("\(verb) started: \(distance)m, ~\(duration)s. Zone radius \(Int(radius))m.", isError: false)
             pollStatus(host: helperHost.trimmingCharacters(in: .whitespaces))
         }
+    }
+
+    /// Freeze the route in place, or continue it. This does not clear the
+    /// fake location — the device stays where the walk left it.
+    private func togglePause() {
+        let host = helperHost.trimmingCharacters(in: .whitespaces)
+        let path = isPaused ? "resume" : "pause"
+        guard let url = URL(string: "http://\(host):8766/\(path)") else {
+            showStatus("Invalid helper host.", isError: true)
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
+        request.timeoutInterval = 15
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    showStatus("Could not reach helper on \(host):8766 (\(error.localizedDescription))", isError: true)
+                    return
+                }
+                guard let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      json["ok"] as? Bool == true else {
+                    noteAuthFailure(response)
+                    showStatus("Helper rejected the pause request.", isError: true)
+                    return
+                }
+                withAnimation { isPaused = json["paused"] as? Bool ?? false }
+                if !isPaused {
+                    pollStatus(host: host)
+                }
+            }
+        }.resume()
     }
 
     private func goToOriginalLocation() {
@@ -375,14 +422,18 @@ struct ContentView: View {
                     let entered = json["entered"] as? Bool ?? false
                     let remaining = json["remaining_m"] as? Double ?? 0
                     let device = (json["device"] as? String).map { "\niPhone: \($0)" } ?? ""
+                    isPaused = json["paused"] as? Bool ?? false
                     if walking {
-                        if entered {
+                        if isPaused {
+                            showStatus("Paused — \(Int(remaining))m to destination. Tap ▶ to continue.\(device)", isError: false)
+                        } else if entered {
                             showStatus("🎯 Entered the geofence zone! Still walking — \(Int(remaining))m to destination.\(device)", isError: false)
                         } else {
                             showStatus("\(runMode ? "Running" : "Walking")… \(Int(remaining))m to destination.\(device)", isError: false)
                         }
                     } else {
                         isWalking = false
+                        isPaused = false
                         showStatus(entered
                                    ? "🎯 Arrived — geofence zone entered."
                                    : "Walk finished (zone never entered).", isError: false)

@@ -260,6 +260,8 @@ class WalkState:
         self.remaining_m = None
         self.radius = None
         self.device = None
+        self.end = None        # (lat, lon) so resume knows where to continue
+        self.speed = None
 
     def set_device(self, note):
         with self.lock:
@@ -275,10 +277,14 @@ class WalkState:
                 "remaining_m": self.remaining_m,
                 "radius": self.radius,
                 "device": self.device,
+                "paused": PAUSE.is_set(),
+                "end": self.end,
+                "speed": self.speed,
             }
 
 
 STATE = WalkState()
+PAUSE = threading.Event()
 
 
 def walk(lat1, lon1, lat2, lon2, radius, speed, cancel):
@@ -295,6 +301,12 @@ def walk(lat1, lon1, lat2, lon2, radius, speed, cancel):
         if cancel.is_set():
             print("  Walk cancelled (new route received).")
             return
+        # Hold position while paused: we simply stop advancing, so the
+        # last coordinate we applied stays in effect.
+        while PAUSE.is_set():
+            if cancel.is_set():
+                return
+            time.sleep(0.2)
         f = i / steps
         lat = lat1 + (lat2 - lat1) * f
         lon = lon1 + (lon2 - lon1) * f
@@ -323,10 +335,13 @@ def start_walk(lat1, lon1, lat2, lon2, radius, speed):
     # Land on the start coordinate synchronously, before this call returns, so
     # the device is already there by the time the app sees its response. The
     # walk then continues from that point instead of easing into it.
+    PAUSE.clear()
     apply_position(lat1, lon1)
     with STATE.lock:
         STATE.reset()
         STATE.walking = True
+        STATE.end = (lat2, lon2)
+        STATE.speed = speed
         STATE.radius = radius
         STATE.lat, STATE.lon = lat1, lon1
         STATE.entered = radius >= haversine_m(lat1, lon1, lat2, lon2)
@@ -368,6 +383,38 @@ def stop_all():
         walking = STATE.walking
         STATE.reset()
     print("  Fake location stopped." + (" (walk cancelled)" if walking else ""))
+
+
+def toggle_pause(paused):
+    """Freeze or continue the route without clearing the fake location.
+
+    The simulator side just stops advancing. The device side is a separate
+    `simulate-location play` process that cannot be paused, so we kill it
+    (leaving the phone at its last point) and, on resume, replay what is
+    left of the route from wherever we currently are.
+    """
+    global DEVICE_PLAY_PROC
+    snap = STATE.snapshot()
+    if not snap["walking"]:
+        return {"paused": False, "note": "no route is running"}
+    if paused:
+        PAUSE.set()
+        with DEVICE_LOCK:
+            if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
+                DEVICE_PLAY_PROC.terminate()
+                DEVICE_PLAY_PROC = None
+        print(f"  Paused at {snap['lat']:.6f}, {snap['lon']:.6f}.")
+    else:
+        PAUSE.clear()
+        end, speed = snap.get("end"), snap.get("speed")
+        if HAS_PMD3 and end and snap["lat"] is not None:
+            threading.Thread(
+                target=lambda: STATE.set_device(start_device_play(
+                    snap["lat"], snap["lon"], end[0], end[1],
+                    speed or WALK_SPEED)),
+                daemon=True).start()
+        print("  Resumed.")
+    return {"paused": paused}
 
 
 def host_allowed(header):
@@ -435,6 +482,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self.gate():
+            return
+        if self.path in ("/pause", "/resume"):
+            self.send_json(200, {"ok": True, **toggle_pause(self.path == "/pause")})
             return
         if self.path == "/stop":
             stop_all()
