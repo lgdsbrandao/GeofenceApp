@@ -17,7 +17,8 @@ Stop it with: Ctrl+C
 
 Security model
 --------------
-* Binds 127.0.0.1 unless --lan is passed. Simulator work never needs --lan.
+* Binds loopback only (127.0.0.1 and ::1) unless --lan is passed. Simulator
+  work never needs --lan.
 * Every request must carry the shared token in the X-Geofence-Token header.
   The token lives in .geofence_token (gitignored, mode 600) and is printed at
   startup; type it into the app once. Requiring a *custom* header also forces
@@ -39,6 +40,7 @@ import ipaddress
 import json
 import math
 import secrets
+import socket
 import subprocess
 import sys
 import os
@@ -495,9 +497,27 @@ class Handler(BaseHTTPRequestHandler):
         })
 
 
+def make_server(addr):
+    """One listener per address family.
+
+    `localhost` resolves to ::1 before 127.0.0.1 on iOS, so an IPv4-only
+    socket makes the app fail its first connection attempt (visible in Xcode
+    as nw_endpoint_flow_failed_with_error on ::1). Binding both loopback
+    addresses keeps that from happening without widening exposure.
+    """
+    family = socket.AF_INET6 if ":" in addr else socket.AF_INET
+    server_class = type("GeofenceServer", (ThreadingHTTPServer,), {
+        "address_family": family,
+        "daemon_threads": True,
+        "allow_reuse_address": True,
+    })
+    return server_class((addr, PORT), Handler)
+
+
 def main():
-    bind = "0.0.0.0" if LAN_MODE else "127.0.0.1"
-    print(f"Geofence panel helper on http://{bind}:{PORT}")
+    binds = ["0.0.0.0", "::"] if LAN_MODE else ["127.0.0.1", "::1"]
+    print(f"Geofence panel helper on http://{binds[0]}:{PORT} "
+          f"(also {binds[1]})")
     print(f"GPX file: {GPX_PATH}")
     print(f"Walk speed: {WALK_SPEED} m/s")
     print()
@@ -510,11 +530,22 @@ def main():
         print("  Loopback only. Pass --lan to test on a physical iPhone.")
     print()
     print("Waiting for 'Update geofence' from the app... (Ctrl+C to stop)")
-    server = ThreadingHTTPServer((bind, PORT), Handler)
+    servers = []
+    for addr in binds:
+        try:
+            servers.append(make_server(addr))
+        except OSError as exc:
+            print(f"  note: could not listen on {addr} ({exc})")
+    if not servers:
+        sys.exit("Could not bind any address.")
+    for server in servers[1:]:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        server.serve_forever()
+        servers[0].serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
+        for server in servers:
+            server.shutdown()
 
 
 if __name__ == "__main__":
