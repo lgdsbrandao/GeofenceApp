@@ -60,7 +60,7 @@ DEVICE_PLAY_LOG = HERE / "device_play.log"
 TOKEN_PATH = HERE / ".geofence_token"
 DEVELOPER_DIR = "/Applications/Xcode.app"
 WALK_SPEED = 1.4          # m/s, normal walking pace
-RUN_SPEED = WALK_SPEED * 2   # m/s, the app's "Run" button
+RUN_SPEED = 10.0          # m/s, the app's "Run" button
 MAX_SPEED = 1000.0        # sanity bound on a client-supplied speed
 TICK_SECONDS = 1.0
 MAX_BODY_BYTES = 8 * 1024
@@ -112,7 +112,7 @@ def haversine_m(lat1, lon1, lat2, lon2):
 def route_steps(total_m, speed=WALK_SPEED):
     """How many one-second ticks to split a route into.
 
-    Short routes keep the requested pace (1.4 m/s walking, 2.8 running).
+    Short routes keep the requested pace (1.4 m/s walking, 10 running).
     Longer ones are compressed into MAX_STEPS ticks (bigger jumps per tick) rather than being refused:
     that keeps intercontinental routes usable while still bounding what one
     request can cost us, since memory and subprocess count scale with steps,

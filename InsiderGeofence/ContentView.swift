@@ -29,7 +29,7 @@ final class OriginalLocationTracker: NSObject, ObservableObject, CLLocationManag
 }
 
 private let walkSpeedMps = 1.4
-private let runSpeedMps = walkSpeedMps * 2
+private let runSpeedMps = 10.0
 
 struct ContentView: View {
     @StateObject private var originalTracker = OriginalLocationTracker()
@@ -86,7 +86,7 @@ struct ContentView: View {
             VStack(spacing: 2) {
                 Text("Geofence Panel")
                     .font(.headline)
-                Text("Walk 1.4 m/s or run 2.8 m/s from start to end; reports zone entry.")
+                Text("Walk 1.4 m/s or run 10 m/s from start to end; reports zone entry.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
