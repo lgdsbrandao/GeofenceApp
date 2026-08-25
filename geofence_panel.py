@@ -215,6 +215,12 @@ def start_device_play(lat1, lon1, lat2, lon2):
     with DEVICE_LOCK:
         if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
             DEVICE_PLAY_PROC.terminate()
+        # `play` takes a few seconds to spin up, which would leave the phone
+        # at its previous position; set the start coordinate first so it
+        # jumps there immediately and `play` walks on from there.
+        run([sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
+             "simulate-location", "set", "--tunnel", "", "--",
+             str(lat1), str(lon1)], timeout=25)
         with DEVICE_PLAY_LOG.open("w") as log:
             DEVICE_PLAY_PROC = subprocess.Popen(
                 [sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
@@ -306,6 +312,10 @@ def start_walk(lat1, lon1, lat2, lon2, radius):
     if STATE.thread and STATE.thread.is_alive():
         STATE.thread.join(timeout=TICK_SECONDS + 5)
     STATE.cancel = threading.Event()
+    # Land on the start coordinate synchronously, before this call returns, so
+    # the device is already there by the time the app sees its response. The
+    # walk then continues from that point instead of easing into it.
+    apply_position(lat1, lon1)
     with STATE.lock:
         STATE.reset()
         STATE.walking = True
