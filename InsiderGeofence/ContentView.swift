@@ -56,6 +56,13 @@ private struct ZoneListResponse: Decodable {
 
 private let insiderPartner = "oxttest"
 private let insiderZonesURL = "https://mobile.useinsider.com/api/v1/geofences"
+/// Which modal is up. A single sheet driver avoids the iOS 14 behaviour
+/// where only the last `.sheet(isPresented:)` on a view actually presents.
+private enum PanelSheet: Int, Identifiable {
+    case zones, settings
+    var id: Int { rawValue }
+}
+
 private let walkSpeedMps = 1.4
 private let runSpeedMps = 10.0
 
@@ -73,7 +80,7 @@ struct ContentView: View {
     @State private var zones: [InsiderZone] = []
     @State private var selectedZone: InsiderZone?
     @State private var isLoadingZones = false
-    @State private var showZoneList = false
+    @State private var activeSheet: PanelSheet?
 
     @State private var statusMessage = ""
     @State private var statusIsError = false
@@ -86,12 +93,7 @@ struct ContentView: View {
     @State private var leg = "out"
     @State private var metresFromCentre: Double?
 
-    @State private var showSettings = false
     @State private var authFailed = false
-
-    private var showsTokenField: Bool {
-        showSettings || authFailed || helperToken.isEmpty
-    }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -101,14 +103,18 @@ struct ContentView: View {
                 .frame(minHeight: 120, maxHeight: .infinity)
                 .cornerRadius(16)
             zoneCard
-            if showSettings || showsTokenField { settingsCard }
             progressCard
             actionButtons
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .sheet(isPresented: $showZoneList) { zoneList }
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .zones: zoneList
+            case .settings: settingsSheet
+            }
+        }
     }
 
     // MARK: - Header
@@ -125,9 +131,9 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
             }
             Spacer()
-            Button(action: { withAnimation { showSettings.toggle() } }) {
-                Image(systemName: showSettings ? "gearshape.fill" : "gearshape")
-                    .foregroundColor(.secondary)
+            Button(action: { activeSheet = .settings }) {
+                Image(systemName: "gearshape")
+                    .foregroundColor(authFailed ? .red : .secondary)
             }
         }
     }
@@ -232,65 +238,63 @@ struct ContentView: View {
 
     // MARK: - Settings
 
-    private var settingsCard: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Label("Mac helper", systemImage: "desktopcomputer")
-                    .font(.subheadline.bold())
-                Spacer()
-                field($helperHost, placeholder: "192.168.x.x", keyboard: .URL)
-                    .frame(width: 175)
-            }
-            Divider()
-            HStack {
-                Label("Partner app", systemImage: "app.badge")
-                    .font(.subheadline.bold())
-                Spacer()
-                field($partnerBundleID, placeholder: "com.example.app",
-                      keyboard: .URL)
-                    .frame(width: 175)
-            }
-            Button(action: resetPartnerApp) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                    Text("Reset its geofence registrations")
-                        .font(.caption.bold())
+    private var settingsSheet: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Connection"),
+                        footer: Text("The token is printed by geofence_panel.py "
+                                     + "when it starts.")) {
+                    labelledField("Mac helper", systemImage: "desktopcomputer",
+                                  binding: $helperHost,
+                                  placeholder: "192.168.x.x", keyboard: .URL)
+                    labelledField("Token", systemImage: "key.fill",
+                                  binding: $helperToken,
+                                  placeholder: "from helper startup",
+                                  keyboard: .asciiCapable,
+                                  tint: authFailed ? .red : .primary)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-            }
-            .background(Color.orange.opacity(0.15))
-            .foregroundColor(.orange)
-            .cornerRadius(10)
-            .disabled(isSending)
-            if showsTokenField {
-                Divider()
-                HStack {
-                    Label("Token", systemImage: "key.fill")
-                        .font(.subheadline.bold())
-                        .foregroundColor(authFailed ? .red : .primary)
-                    Spacer()
-                    field($helperToken, placeholder: "from helper startup",
-                          keyboard: .asciiCapable)
-                        .frame(width: 175)
+
+                Section(header: Text("Partner app"),
+                        footer: Text("iOS monitors at most 20 regions per app and "
+                                     + "keeps them across launches, so a zone added "
+                                     + "later is refused until the app is "
+                                     + "reinstalled. This reinstalls it from its own "
+                                     + "binary — no source needed — and clears its "
+                                     + "local data.")) {
+                    labelledField("Bundle id", systemImage: "app.badge",
+                                  binding: $partnerBundleID,
+                                  placeholder: "com.example.app", keyboard: .URL)
+                    Button(action: resetPartnerApp) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text("Reset its geofence registrations")
+                        }
+                        .foregroundColor(.orange)
+                    }
+                    .disabled(isSending)
                 }
             }
+            .navigationBarTitle(Text("Settings"), displayMode: .inline)
+            .navigationBarItems(trailing: Button("Done") { activeSheet = nil })
         }
-        .padding(12)
-        .background(Color(.secondarySystemGroupedBackground))
-        .cornerRadius(16)
     }
 
-    private func field(_ binding: Binding<String>, placeholder: String,
-                       keyboard: UIKeyboardType) -> some View {
-        TextField(placeholder, text: binding)
-            .keyboardType(keyboard)
-            .autocapitalization(.none)
-            .disableAutocorrection(true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Color(.tertiarySystemFill))
-            .cornerRadius(8)
+    private func labelledField(_ title: String, systemImage: String,
+                               binding: Binding<String>, placeholder: String,
+                               keyboard: UIKeyboardType,
+                               tint: Color = .primary) -> some View {
+        HStack {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline)
+                .foregroundColor(tint)
+            Spacer()
+            TextField(placeholder, text: binding)
+                .keyboardType(keyboard)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .multilineTextAlignment(.trailing)
+                .foregroundColor(.secondary)
+        }
     }
 
     // MARK: - Actions
@@ -346,7 +350,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
         }
-        .background(selectedZone == nil ? Color.secondary.opacity(0.3) : color)
+        .background(color)
         .foregroundColor(.white)
         .cornerRadius(14)
         .disabled(isSending || selectedZone == nil)
@@ -384,7 +388,7 @@ struct ContentView: View {
         entered = false
         exited = false
         metresFromCentre = nil
-        showZoneList = false
+        activeSheet = nil
         showStatus("\(zone.identifier) ready — \(Int(zone.radius + 50)) m out, in and back.",
                    isError: false)
     }
@@ -427,7 +431,7 @@ struct ContentView: View {
                 if zones.isEmpty {
                     showStatus("No geofences configured for \(insiderPartner).", isError: false)
                 } else {
-                    showZoneList = true
+                    activeSheet = .zones
                 }
             }
         }.resume()
@@ -542,7 +546,8 @@ struct ContentView: View {
                     onSuccess(json)
                 } else {
                     if (response as? HTTPURLResponse)?.statusCode == 401 {
-                        withAnimation { authFailed = true }
+                        authFailed = true
+                        activeSheet = .settings   // the token needs fixing
                     }
                     showStatus(json["error"] as? String ?? "The helper reported an error.",
                                isError: true)
