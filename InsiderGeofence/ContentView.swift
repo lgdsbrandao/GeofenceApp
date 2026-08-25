@@ -68,6 +68,7 @@ struct ContentView: View {
     @AppStorage("helperHost") private var helperHost: String = ""
     #endif
     @AppStorage("helperToken") private var helperToken: String = ""
+    @AppStorage("partnerBundleID") private var partnerBundleID: String = "com.useinsider.mobile-ios"
 
     @State private var zones: [InsiderZone] = []
     @State private var selectedZone: InsiderZone?
@@ -240,6 +241,28 @@ struct ContentView: View {
                 field($helperHost, placeholder: "192.168.x.x", keyboard: .URL)
                     .frame(width: 175)
             }
+            Divider()
+            HStack {
+                Label("Partner app", systemImage: "app.badge")
+                    .font(.subheadline.bold())
+                Spacer()
+                field($partnerBundleID, placeholder: "com.example.app",
+                      keyboard: .URL)
+                    .frame(width: 175)
+            }
+            Button(action: resetPartnerApp) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                    Text("Reset its geofence registrations")
+                        .font(.caption.bold())
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            }
+            .background(Color.orange.opacity(0.15))
+            .foregroundColor(.orange)
+            .cornerRadius(10)
+            .disabled(isSending)
             if showsTokenField {
                 Divider()
                 HStack {
@@ -447,6 +470,24 @@ struct ContentView: View {
             metresFromCentre = nil
             showStatus(String(format: "Back at original location (%.5f, %.5f).",
                               original.latitude, original.longitude), isError: false)
+        }
+    }
+
+    /// iOS caps monitored regions at 20 per app and keeps them across
+    /// launches. When a partner SDK re-registers without releasing the old
+    /// ones, newly added geofences are refused forever. We cannot clear
+    /// another app's regions from outside it, so the helper reinstalls the app
+    /// from its own installed binary — no source access needed.
+    private func resetPartnerApp() {
+        let bundle = partnerBundleID.trimmingCharacters(in: .whitespaces)
+        guard !bundle.isEmpty else {
+            showStatus("Enter the partner app's bundle id first.", isError: true)
+            return
+        }
+        send(path: "reset-app", body: ["bundle_id": bundle]) { json in
+            let detail = json["detail"] as? String ?? "done"
+            showStatus("\(bundle) reset — \(detail). Its geofences re-register "
+                       + "on this launch.", isError: false)
         }
     }
 

@@ -40,7 +40,9 @@ import ipaddress
 import json
 import math
 import secrets
+import shutil
 import socket
+import tempfile
 import subprocess
 import sys
 import os
@@ -412,6 +414,57 @@ def stop_all():
     print("  Fake location stopped." + (" (walk cancelled)" if walking else ""))
 
 
+def reset_partner_app(bundle_id):
+    """Clear another app's monitored regions without touching its source.
+
+    iOS caps monitored regions at 20 per app and keeps them across launches.
+    An SDK that re-syncs its fence list without calling stopMonitoring leaves
+    the quota permanently full, so newly added geofences are refused. You
+    cannot release another app's regions from outside it, and locationd keeps
+    them in an encrypted store, so reinstalling the app is the only lever --
+    which is fine for a partner app, since it needs no source access.
+
+    The installed bundle is copied out and reinstalled, so the same binary
+    comes back. The app's data is lost; that is inherent to the reset.
+    """
+    env = dict(os.environ, DEVELOPER_DIR=DEVELOPER_DIR)
+    results = []
+    for udid in booted_udids():
+        code, path = run(["xcrun", "simctl", "get_app_container", udid,
+                          bundle_id, "app"], env=env)
+        if code != 0:
+            continue
+        path = path.strip()
+        staging = tempfile.mkdtemp(prefix="geofence-reset-")
+        try:
+            copy = os.path.join(staging, os.path.basename(path))
+            shutil.copytree(path, copy, symlinks=True)
+            run(["xcrun", "simctl", "terminate", udid, bundle_id], env=env)
+            code, out = run(["xcrun", "simctl", "uninstall", udid, bundle_id],
+                            env=env)
+            if code != 0:
+                results.append(f"{udid[:8]}: uninstall failed ({out})")
+                continue
+            code, out = run(["xcrun", "simctl", "install", udid, copy],
+                            env=env, timeout=120)
+            if code != 0:
+                results.append(f"{udid[:8]}: REINSTALL FAILED ({out}) -- "
+                               f"bundle kept at {copy}")
+                continue
+            run(["xcrun", "simctl", "privacy", udid, "grant",
+                 "location-always", bundle_id], env=env)
+            run(["xcrun", "simctl", "launch", udid, bundle_id], env=env)
+            results.append(f"{udid[:8]}: reinstalled and relaunched")
+            shutil.rmtree(staging, ignore_errors=True)
+        except OSError as exc:
+            results.append(f"{udid[:8]}: {exc}")
+    if not results:
+        return {"ok": False, "error": f"{bundle_id} is not installed on any "
+                                      f"booted simulator"}
+    print(f"  Reset {bundle_id}: " + "; ".join(results))
+    return {"ok": True, "detail": "; ".join(results)}
+
+
 def toggle_pause(paused):
     """Freeze or continue the route without clearing the fake location.
 
@@ -509,6 +562,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self.gate():
+            return
+        if self.path == "/reset-app":
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+                bundle = json.loads(self.rfile.read(min(length, MAX_BODY_BYTES)))
+                bundle_id = str(bundle["bundle_id"]).strip()
+                if not bundle_id or "/" in bundle_id:
+                    raise ValueError("invalid bundle id")
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"ok": False, "error": f"bad request: {exc}"})
+                return
+            result = reset_partner_app(bundle_id)
+            self.send_json(200 if result["ok"] else 404, result)
             return
         if self.path in ("/pause", "/resume"):
             self.send_json(200, {"ok": True, **toggle_pause(self.path == "/pause")})
