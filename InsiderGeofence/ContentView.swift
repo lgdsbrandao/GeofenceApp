@@ -28,6 +28,26 @@ final class OriginalLocationTracker: NSObject, ObservableObject, CLLocationManag
     }
 }
 
+/// One zone as returned by Insider's geofence API.
+struct InsiderZone: Decodable, Identifiable {
+    let id: Int
+    let identifier: String
+    let latitude: Double
+    let longitude: Double
+    let radius: Double
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+private struct ZoneListResponse: Decodable {
+    let geofences: [InsiderZone]
+}
+
+private let insiderPartner = "oxttest"
+private let insiderZonesURL = "https://mobile.useinsider.com/api/v1/geofences"
+
 private let walkSpeedMps = 1.4
 private let runSpeedMps = 10.0
 
@@ -57,6 +77,9 @@ struct ContentView: View {
     /// Which pace the in-flight or active route is using.
     @State private var runMode: Bool = false
     @State private var isPaused: Bool = false
+    @State private var zones: [InsiderZone] = []
+    @State private var isLoadingZones: Bool = false
+    @State private var showZoneList: Bool = false
     @State private var authFailed: Bool = false
 
     /// The token is a set-once value, so it stays hidden unless it is still
@@ -77,6 +100,7 @@ struct ContentView: View {
         .padding(.horizontal)
         .padding(.vertical, 6)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .sheet(isPresented: $showZoneList) { zoneList }
     }
 
     // MARK: - Sections
@@ -92,18 +116,32 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity)
 
-            Button(action: { withAnimation { showSettings.toggle() } }) {
-                Image(systemName: showSettings ? "gearshape.fill" : "gearshape")
-                    .foregroundColor(.secondary)
-                    .padding(.leading, 12)
+            HStack(spacing: 16) {
+                Button(action: fetchZones) {
+                    if isLoadingZones {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "mappin.and.ellipse")
+                    }
+                }
+                .disabled(isLoadingZones)
+
+                Button(action: { withAnimation { showSettings.toggle() } }) {
+                    Image(systemName: showSettings ? "gearshape.fill" : "gearshape")
+                }
             }
+            .foregroundColor(.secondary)
+            .padding(.leading, 12)
         }
     }
 
     private var mapCard: some View {
         Map(coordinateRegion: $mapRegion,
             showsUserLocation: true,
-            userTrackingMode: $mapTrackingMode)
+            userTrackingMode: $mapTrackingMode,
+            annotationItems: zones) { zone in
+                MapMarker(coordinate: zone.coordinate, tint: .purple)
+            }
             .frame(minHeight: 90, maxHeight: .infinity)
             .cornerRadius(16)
     }
@@ -250,6 +288,31 @@ struct ContentView: View {
             .padding(12)
             .background((statusIsError ? Color.red : Color.green).opacity(0.12))
             .cornerRadius(12)
+        }
+    }
+
+    /// Tapping a zone loads it into End + radius, ready to walk into.
+    private var zoneList: some View {
+        NavigationView {
+            List(zones) { zone in
+                Button(action: { use(zone) }) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(zone.identifier)
+                                .font(.subheadline.bold())
+                                .foregroundColor(.primary)
+                            Text(String(format: "%.5f, %.5f  ·  r %.0f m",
+                                        zone.latitude, zone.longitude, zone.radius))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.right.circle")
+                            .foregroundColor(.blue)
+                    }
+                }
+            }
+            .navigationBarTitle(Text("\(zones.count) geofences"), displayMode: .inline)
         }
     }
 
@@ -452,6 +515,62 @@ struct ContentView: View {
         if (response as? HTTPURLResponse)?.statusCode == 401 {
             withAnimation { authFailed = true }
         }
+    }
+
+    /// Ask Insider for the zones near the Start coordinate.
+    private func fetchZones() {
+        guard let lat = parse(startLatitude, range: -90.0...90.0),
+              let lon = parse(startLongitude, range: -180.0...180.0) else {
+            showStatus("Set a valid Start coordinate first — it is sent as the search location.",
+                       isError: true)
+            return
+        }
+        guard let url = URL(string: insiderZonesURL) else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 20
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "partner_name": insiderPartner,
+            "user_location": ["latitude": String(lat), "longitude": String(lon)],
+        ])
+
+        isLoadingZones = true
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            DispatchQueue.main.async {
+                isLoadingZones = false
+                if let error = error {
+                    showStatus("Could not load geofences: \(error.localizedDescription)", isError: true)
+                    return
+                }
+                guard let data = data,
+                      let decoded = try? JSONDecoder().decode(ZoneListResponse.self, from: data) else {
+                    showStatus("Unexpected response from the geofence API.", isError: true)
+                    return
+                }
+                zones = decoded.geofences
+                if zones.isEmpty {
+                    showStatus("No geofences returned for that location.", isError: false)
+                } else {
+                    showStatus("Loaded \(zones.count) geofences. Tap one to target it.", isError: false)
+                    showZoneList = true
+                }
+            }
+        }.resume()
+    }
+
+    /// Load a zone into the End fields so a walk can cross into it.
+    private func use(_ zone: InsiderZone) {
+        endLatitude = String(zone.latitude)
+        endLongitude = String(zone.longitude)
+        zoneRadius = String(format: "%.0f", zone.radius)
+        mapRegion = MKCoordinateRegion(
+            center: zone.coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
+        mapTrackingMode = .none
+        showZoneList = false
+        showStatus("Target set to \(zone.identifier) (r \(Int(zone.radius))m).", isError: false)
     }
 
     private func parse(_ text: String, range: ClosedRange<Double>) -> Double? {
