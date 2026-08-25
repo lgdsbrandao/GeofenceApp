@@ -60,6 +60,8 @@ DEVICE_PLAY_LOG = HERE / "device_play.log"
 TOKEN_PATH = HERE / ".geofence_token"
 DEVELOPER_DIR = "/Applications/Xcode.app"
 WALK_SPEED = 1.4          # m/s, normal walking pace
+RUN_SPEED = WALK_SPEED * 2   # m/s, the app's "Run" button
+MAX_SPEED = 1000.0        # sanity bound on a client-supplied speed
 TICK_SECONDS = 1.0
 MAX_BODY_BYTES = 8 * 1024
 MAX_STEPS = 600           # bounds memory/CPU per request; see route_steps()
@@ -107,16 +109,16 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def route_steps(total_m):
+def route_steps(total_m, speed=WALK_SPEED):
     """How many one-second ticks to split a route into.
 
-    Short routes keep a true 1.4 m/s walking pace. Longer ones are compressed
-    into MAX_STEPS ticks (bigger jumps per tick) rather than being refused:
+    Short routes keep the requested pace (1.4 m/s walking, 2.8 running).
+    Longer ones are compressed into MAX_STEPS ticks (bigger jumps per tick) rather than being refused:
     that keeps intercontinental routes usable while still bounding what one
     request can cost us, since memory and subprocess count scale with steps,
     not with distance. For an instant jump, set the start equal to the end.
     """
-    natural = max(int(total_m / (WALK_SPEED * TICK_SECONDS)), 1)
+    natural = max(int(total_m / (speed * TICK_SECONDS)), 1)
     return min(natural, MAX_STEPS)
 
 
@@ -182,10 +184,10 @@ DEVICE_PLAY_PROC = None
 DEVICE_LOCK = threading.Lock()
 
 
-def write_device_gpx(lat1, lon1, lat2, lon2):
+def write_device_gpx(lat1, lon1, lat2, lon2, speed=WALK_SPEED):
     """Per-second track GPX for pymobiledevice3 `simulate-location play`."""
     total = haversine_m(lat1, lon1, lat2, lon2)
-    steps = route_steps(total)
+    steps = route_steps(total, speed)
     t0 = datetime.now(timezone.utc)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
     points = []
@@ -204,7 +206,7 @@ def write_device_gpx(lat1, lon1, lat2, lon2):
     )
 
 
-def start_device_play(lat1, lon1, lat2, lon2):
+def start_device_play(lat1, lon1, lat2, lon2, speed=WALK_SPEED):
     """Replay the walk on a physical iPhone via pymobiledevice3 (iOS 17+).
 
     Needs the phone paired (USB at least once) and the tunnel daemon running:
@@ -213,7 +215,7 @@ def start_device_play(lat1, lon1, lat2, lon2):
     global DEVICE_PLAY_PROC
     if not HAS_PMD3:
         return "pymobiledevice3 not installed — device skipped"
-    write_device_gpx(lat1, lon1, lat2, lon2)
+    write_device_gpx(lat1, lon1, lat2, lon2, speed)
     with DEVICE_LOCK:
         if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
             DEVICE_PLAY_PROC.terminate()
@@ -279,11 +281,15 @@ class WalkState:
 STATE = WalkState()
 
 
-def walk(lat1, lon1, lat2, lon2, radius, cancel):
+def walk(lat1, lon1, lat2, lon2, radius, speed, cancel):
     total = haversine_m(lat1, lon1, lat2, lon2)
-    steps = route_steps(total)
-    print(f"  Walk started: {total:.0f}m in ~{steps * TICK_SECONDS:.0f}s, "
-          f"zone radius {radius:.0f}m around destination")
+    steps = route_steps(total, speed)
+    mode = "Run" if speed > WALK_SPEED else "Walk"
+    effective = total / (steps * TICK_SECONDS)
+    pace = (f"{effective:.1f} m/s (compressed from {speed:.1f})"
+            if effective > speed * 1.05 else f"{speed:.1f} m/s")
+    print(f"  {mode} started: {total:.0f}m in ~{steps * TICK_SECONDS:.0f}s "
+          f"at {pace}, zone radius {radius:.0f}m around destination")
 
     for i in range(steps + 1):
         if cancel.is_set():
@@ -306,10 +312,10 @@ def walk(lat1, lon1, lat2, lon2, radius, cancel):
 
     with STATE.lock:
         STATE.walking = False
-    print(f"  Walk finished at {lat2}, {lon2}.")
+    print(f"  {mode} finished at {lat2}, {lon2}.")
 
 
-def start_walk(lat1, lon1, lat2, lon2, radius):
+def start_walk(lat1, lon1, lat2, lon2, radius, speed):
     STATE.cancel.set()
     if STATE.thread and STATE.thread.is_alive():
         STATE.thread.join(timeout=TICK_SECONDS + 5)
@@ -325,7 +331,7 @@ def start_walk(lat1, lon1, lat2, lon2, radius):
         STATE.lat, STATE.lon = lat1, lon1
         STATE.entered = radius >= haversine_m(lat1, lon1, lat2, lon2)
     STATE.thread = threading.Thread(
-        target=walk, args=(lat1, lon1, lat2, lon2, radius, STATE.cancel),
+        target=walk, args=(lat1, lon1, lat2, lon2, radius, speed, STATE.cancel),
         daemon=True,
     )
     STATE.thread.start()
@@ -458,9 +464,10 @@ class Handler(BaseHTTPRequestHandler):
             lat1, lon1 = float(data["start_lat"]), float(data["start_lon"])
             lat2, lon2 = float(data["end_lat"]), float(data["end_lon"])
             radius = float(data["radius"])
+            speed = float(data.get("speed", WALK_SPEED))
             # isfinite matters: float("nan") parses fine, and every comparison
             # against NaN is False, which would silently disable zone entry.
-            for value in (lat1, lon1, lat2, lon2, radius):
+            for value in (lat1, lon1, lat2, lon2, radius, speed):
                 if not math.isfinite(value):
                     raise ValueError("values must be finite numbers")
             for lat, lon in ((lat1, lon1), (lat2, lon2)):
@@ -468,32 +475,36 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("coordinates out of range")
             if not 0 < radius <= MAX_RADIUS_M:
                 raise ValueError(f"radius must be between 0 and {MAX_RADIUS_M} m")
+            if not 0 < speed <= MAX_SPEED:
+                raise ValueError(f"speed must be between 0 and {MAX_SPEED} m/s")
             total = haversine_m(lat1, lon1, lat2, lon2)
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             self.send_json(400, {"ok": False, "error": f"bad request: {exc}"})
             return
 
-        steps = route_steps(total)
+        steps = route_steps(total, speed)
         duration = steps * TICK_SECONDS
-        speed = total / duration if duration else 0.0
+        effective = total / duration if duration else 0.0
+        mode = "running" if speed > WALK_SPEED else "walking"
         write_gpx(lat1, lon1, lat2, lon2, duration)
         print(f"  GPX updated: {lat1},{lon1} -> {lat2},{lon2} "
-              f"({total:.0f}m, ~{duration:.0f}s at {speed:.1f} m/s, "
+              f"({total:.0f}m, ~{duration:.0f}s {mode} at {effective:.1f} m/s, "
               f"zone {radius:.0f}m)")
-        start_walk(lat1, lon1, lat2, lon2, radius)
+        start_walk(lat1, lon1, lat2, lon2, radius, speed)
         threading.Thread(
             target=lambda: STATE.set_device(
-                start_device_play(lat1, lon1, lat2, lon2)),
+                start_device_play(lat1, lon1, lat2, lon2, speed)),
             daemon=True,
         ).start()
         self.send_json(200, {
             "ok": True,
             "distance_m": round(total),
             "duration_s": round(duration),
-            "applied": (f"walking {total / 1000:.0f}km, ~{duration:.0f}s "
-                        f"at {speed:.0f} m/s (compressed)"
-                        if speed > WALK_SPEED * 1.05 else
-                        f"walking {total:.0f}m, ~{duration:.0f}s"),
+            "speed_mps": round(effective, 2),
+            "applied": (f"{mode} {total / 1000:.0f}km, ~{duration:.0f}s "
+                        f"at {effective:.0f} m/s (compressed)"
+                        if effective > speed * 1.05 else
+                        f"{mode} {total:.0f}m, ~{duration:.0f}s"),
         })
 
 
