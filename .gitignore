@@ -16,3 +16,6 @@ Signing.xcconfig
 
 # Stale project dir Xcode may recreate from an old open window
 LocationMovement.xcodeproj/
+
+# Shared secret for the helper (generated at first run)
+.geofence_token

@@ -10,14 +10,37 @@ pymobiledevice3 is installed). When the position first crosses into the
 geofence zone — a circle of the given radius around the end location — it
 logs the entry and exposes it on /status for the app to display.
 
-Run it with:  python3 geofence_panel.py
+Run it with:  python3 geofence_panel.py          (loopback only)
+              python3 geofence_panel.py --lan    (also reachable from the LAN,
+                                                  needed for a physical iPhone)
 Stop it with: Ctrl+C
+
+Security model
+--------------
+* Binds loopback only (127.0.0.1 and ::1) unless --lan is passed. Simulator
+  work never needs --lan.
+* Every request must carry the shared token in the X-Geofence-Token header.
+  The token lives in .geofence_token (gitignored, mode 600) and is printed at
+  startup; type it into the app once. Requiring a *custom* header also forces
+  a CORS preflight, so a random web page cannot drive this server.
+* The Host header is validated, which blocks DNS-rebinding attacks.
+* Request bodies, interpolation steps and radius are capped and sockets time
+  out, so a single request cannot exhaust memory, threads or CPU. Distance
+  itself is not limited — long routes are compressed, see route_steps().
+
+Caveat: traffic is plain HTTP. With --lan, anyone sniffing that network can
+read the coordinates you send — including your real position if you use the
+"Go to original location" button. Avoid --lan on untrusted Wi-Fi.
 """
 
 import functools
+import hmac
 import importlib.util
+import ipaddress
 import json
 import math
+import secrets
+import socket
 import subprocess
 import sys
 import os
@@ -29,13 +52,22 @@ from pathlib import Path
 
 print = functools.partial(print, flush=True)
 
+HERE = Path(__file__).resolve().parent
 PORT = 8766
-GPX_PATH = Path(__file__).resolve().parent / "update_fake_route_here.gpx"
-DEVICE_GPX_PATH = Path(__file__).resolve().parent / "device_route.gpx"
-DEVICE_PLAY_LOG = Path(__file__).resolve().parent / "device_play.log"
+GPX_PATH = HERE / "update_fake_route_here.gpx"
+DEVICE_GPX_PATH = HERE / "device_route.gpx"
+DEVICE_PLAY_LOG = HERE / "device_play.log"
+TOKEN_PATH = HERE / ".geofence_token"
 DEVELOPER_DIR = "/Applications/Xcode.app"
-WALK_SPEED = 1.4      # m/s, normal walking pace
+WALK_SPEED = 1.4          # m/s, normal walking pace
+RUN_SPEED = 10.0          # m/s, the app's "Run" button
+MAX_SPEED = 1000.0        # sanity bound on a client-supplied speed
 TICK_SECONDS = 1.0
+MAX_BODY_BYTES = 8 * 1024
+MAX_STEPS = 600           # bounds memory/CPU per request; see route_steps()
+MAX_RADIUS_M = 100_000
+SOCKET_TIMEOUT = 10       # seconds; stops slow clients from pinning threads
+LAN_MODE = "--lan" in sys.argv
 HAS_PMD3 = importlib.util.find_spec("pymobiledevice3") is not None
 
 GPX_TEMPLATE = """<?xml version="1.0"?>
@@ -50,6 +82,24 @@ GPX_TEMPLATE = """<?xml version="1.0"?>
 """
 
 
+def load_token():
+    """Stable shared secret: env var if set, otherwise a file we create once."""
+    env = os.environ.get("GEOFENCE_TOKEN", "").strip()
+    if env:
+        return env
+    if TOKEN_PATH.exists():
+        existing = TOKEN_PATH.read_text().strip()
+        if existing:
+            return existing
+    token = secrets.token_urlsafe(18)
+    TOKEN_PATH.write_text(token + "\n")
+    TOKEN_PATH.chmod(0o600)
+    return token
+
+
+TOKEN = load_token()
+
+
 def haversine_m(lat1, lon1, lat2, lon2):
     r = 6371000.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -57,6 +107,19 @@ def haversine_m(lat1, lon1, lat2, lon2):
     dl = math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
+
+
+def route_steps(total_m, speed=WALK_SPEED):
+    """How many one-second ticks to split a route into.
+
+    Short routes keep the requested pace (1.4 m/s walking, 10 running).
+    Longer ones are compressed into MAX_STEPS ticks (bigger jumps per tick) rather than being refused:
+    that keeps intercontinental routes usable while still bounding what one
+    request can cost us, since memory and subprocess count scale with steps,
+    not with distance. For an instant jump, set the start equal to the end.
+    """
+    natural = max(int(total_m / (speed * TICK_SECONDS)), 1)
+    return min(natural, MAX_STEPS)
 
 
 def write_gpx(lat1, lon1, lat2, lon2, duration_s):
@@ -118,12 +181,13 @@ def apply_position(lat, lon, quiet=True):
 
 
 DEVICE_PLAY_PROC = None
+DEVICE_LOCK = threading.Lock()
 
 
-def write_device_gpx(lat1, lon1, lat2, lon2):
+def write_device_gpx(lat1, lon1, lat2, lon2, speed=WALK_SPEED):
     """Per-second track GPX for pymobiledevice3 `simulate-location play`."""
     total = haversine_m(lat1, lon1, lat2, lon2)
-    steps = max(int(total / (WALK_SPEED * TICK_SECONDS)), 1)
+    steps = route_steps(total, speed)
     t0 = datetime.now(timezone.utc)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
     points = []
@@ -142,7 +206,7 @@ def write_device_gpx(lat1, lon1, lat2, lon2):
     )
 
 
-def start_device_play(lat1, lon1, lat2, lon2):
+def start_device_play(lat1, lon1, lat2, lon2, speed=WALK_SPEED):
     """Replay the walk on a physical iPhone via pymobiledevice3 (iOS 17+).
 
     Needs the phone paired (USB at least once) and the tunnel daemon running:
@@ -151,17 +215,26 @@ def start_device_play(lat1, lon1, lat2, lon2):
     global DEVICE_PLAY_PROC
     if not HAS_PMD3:
         return "pymobiledevice3 not installed — device skipped"
-    if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
-        DEVICE_PLAY_PROC.terminate()
-    write_device_gpx(lat1, lon1, lat2, lon2)
-    log = DEVICE_PLAY_LOG.open("w")
-    DEVICE_PLAY_PROC = subprocess.Popen(
-        [sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
-         "simulate-location", "play", str(DEVICE_GPX_PATH), "--tunnel", ""],
-        stdout=log, stderr=log,
-    )
+    write_device_gpx(lat1, lon1, lat2, lon2, speed)
+    with DEVICE_LOCK:
+        if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
+            DEVICE_PLAY_PROC.terminate()
+        # `play` takes a few seconds to spin up, which would leave the phone
+        # at its previous position; set the start coordinate first so it
+        # jumps there immediately and `play` walks on from there.
+        run([sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
+             "simulate-location", "set", "--tunnel", "", "--",
+             str(lat1), str(lon1)], timeout=25)
+        with DEVICE_PLAY_LOG.open("w") as log:
+            DEVICE_PLAY_PROC = subprocess.Popen(
+                [sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
+                 "simulate-location", "play", str(DEVICE_GPX_PATH),
+                 "--tunnel", ""],
+                stdout=log, stderr=log,
+            )
+        proc = DEVICE_PLAY_PROC
     time.sleep(3)
-    if DEVICE_PLAY_PROC.poll() is not None:
+    if proc.poll() is not None:
         hint = DEVICE_PLAY_LOG.read_text().strip().splitlines()
         hint = hint[-1] if hint else "unknown error"
         print("  device: play exited immediately — is the iPhone plugged in and "
@@ -187,6 +260,8 @@ class WalkState:
         self.remaining_m = None
         self.radius = None
         self.device = None
+        self.end = None        # (lat, lon) so resume knows where to continue
+        self.speed = None
 
     def set_device(self, note):
         with self.lock:
@@ -202,22 +277,36 @@ class WalkState:
                 "remaining_m": self.remaining_m,
                 "radius": self.radius,
                 "device": self.device,
+                "paused": PAUSE.is_set(),
+                "end": self.end,
+                "speed": self.speed,
             }
 
 
 STATE = WalkState()
+PAUSE = threading.Event()
 
 
-def walk(lat1, lon1, lat2, lon2, radius, cancel):
+def walk(lat1, lon1, lat2, lon2, radius, speed, cancel):
     total = haversine_m(lat1, lon1, lat2, lon2)
-    steps = max(int(total / (WALK_SPEED * TICK_SECONDS)), 1)
-    print(f"  Walk started: {total:.0f}m in ~{steps * TICK_SECONDS:.0f}s, "
-          f"zone radius {radius:.0f}m around destination")
+    steps = route_steps(total, speed)
+    mode = "Run" if speed > WALK_SPEED else "Walk"
+    effective = total / (steps * TICK_SECONDS)
+    pace = (f"{effective:.1f} m/s (compressed from {speed:.1f})"
+            if effective > speed * 1.05 else f"{speed:.1f} m/s")
+    print(f"  {mode} started: {total:.0f}m in ~{steps * TICK_SECONDS:.0f}s "
+          f"at {pace}, zone radius {radius:.0f}m around destination")
 
     for i in range(steps + 1):
         if cancel.is_set():
             print("  Walk cancelled (new route received).")
             return
+        # Hold position while paused: we simply stop advancing, so the
+        # last coordinate we applied stays in effect.
+        while PAUSE.is_set():
+            if cancel.is_set():
+                return
+            time.sleep(0.2)
         f = i / steps
         lat = lat1 + (lat2 - lat1) * f
         lon = lon1 + (lon2 - lon1) * f
@@ -235,22 +324,29 @@ def walk(lat1, lon1, lat2, lon2, radius, cancel):
 
     with STATE.lock:
         STATE.walking = False
-    print(f"  Walk finished at {lat2}, {lon2}.")
+    print(f"  {mode} finished at {lat2}, {lon2}.")
 
 
-def start_walk(lat1, lon1, lat2, lon2, radius):
+def start_walk(lat1, lon1, lat2, lon2, radius, speed):
     STATE.cancel.set()
     if STATE.thread and STATE.thread.is_alive():
         STATE.thread.join(timeout=TICK_SECONDS + 5)
     STATE.cancel = threading.Event()
+    # Land on the start coordinate synchronously, before this call returns, so
+    # the device is already there by the time the app sees its response. The
+    # walk then continues from that point instead of easing into it.
+    PAUSE.clear()
+    apply_position(lat1, lon1)
     with STATE.lock:
         STATE.reset()
         STATE.walking = True
+        STATE.end = (lat2, lon2)
+        STATE.speed = speed
         STATE.radius = radius
         STATE.lat, STATE.lon = lat1, lon1
         STATE.entered = radius >= haversine_m(lat1, lon1, lat2, lon2)
     STATE.thread = threading.Thread(
-        target=walk, args=(lat1, lon1, lat2, lon2, radius, STATE.cancel),
+        target=walk, args=(lat1, lon1, lat2, lon2, radius, speed, STATE.cancel),
         daemon=True,
     )
     STATE.thread.start()
@@ -262,12 +358,13 @@ def stop_all():
     STATE.cancel.set()
     if STATE.thread and STATE.thread.is_alive():
         STATE.thread.join(timeout=TICK_SECONDS + 5)
-    if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
-        DEVICE_PLAY_PROC.terminate()
-        DEVICE_PLAY_PROC = None
+    with DEVICE_LOCK:
+        if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
+            DEVICE_PLAY_PROC.terminate()
+            DEVICE_PLAY_PROC = None
     env = dict(os.environ, DEVELOPER_DIR=DEVELOPER_DIR)
     for udid in booted_udids():
-        code, output = run(["xcrun", "simctl", "location", udid, "clear"], env=env)
+        code, _ = run(["xcrun", "simctl", "location", udid, "clear"], env=env)
         if code == 0:
             print(f"  simulator {udid[:8]}: fake location cleared")
     if HAS_PMD3:
@@ -288,28 +385,107 @@ def stop_all():
     print("  Fake location stopped." + (" (walk cancelled)" if walking else ""))
 
 
+def toggle_pause(paused):
+    """Freeze or continue the route without clearing the fake location.
+
+    The simulator side just stops advancing. The device side is a separate
+    `simulate-location play` process that cannot be paused, so we kill it
+    (leaving the phone at its last point) and, on resume, replay what is
+    left of the route from wherever we currently are.
+    """
+    global DEVICE_PLAY_PROC
+    snap = STATE.snapshot()
+    if not snap["walking"]:
+        return {"paused": False, "note": "no route is running"}
+    if paused:
+        PAUSE.set()
+        with DEVICE_LOCK:
+            if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
+                DEVICE_PLAY_PROC.terminate()
+                DEVICE_PLAY_PROC = None
+        print(f"  Paused at {snap['lat']:.6f}, {snap['lon']:.6f}.")
+    else:
+        PAUSE.clear()
+        end, speed = snap.get("end"), snap.get("speed")
+        if HAS_PMD3 and end and snap["lat"] is not None:
+            threading.Thread(
+                target=lambda: STATE.set_device(start_device_play(
+                    snap["lat"], snap["lon"], end[0], end[1],
+                    speed or WALK_SPEED)),
+                daemon=True).start()
+        print("  Resumed.")
+    return {"paused": paused}
+
+
+def host_allowed(header):
+    """Anti-DNS-rebinding check.
+
+    A rebinding attack keeps the attacker's own domain in the Host header, so
+    accepting only localhost (plus private IP literals in --lan mode) means a
+    rebound request is refused even though it reaches our socket.
+    """
+    if not header:
+        return False
+    host = header.rsplit(":", 1)[0].strip("[]").lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    if not LAN_MODE:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return host.endswith(".local")
+
+
 class Handler(BaseHTTPRequestHandler):
+    timeout = SOCKET_TIMEOUT
+
     def log_message(self, fmt, *args):
-        if "/status" not in (args[0] if args else ""):
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {fmt % args}")
+        # The request line is attacker-controlled, so escape it before printing:
+        # otherwise a crafted request can write raw terminal escape sequences
+        # to the console and rewrite what you see.
+        safe = (fmt % args).encode("unicode_escape").decode("ascii", "replace")
+        if "/status" not in safe:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {safe}")
 
     def send_json(self, status, payload):
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
+    def gate(self):
+        """Checks every request must pass. Returns True when allowed."""
+        if not host_allowed(self.headers.get("Host", "")):
+            self.send_json(403, {"ok": False, "error": "host not allowed"})
+            return False
+        supplied = self.headers.get("X-Geofence-Token", "")
+        if not hmac.compare_digest(supplied, TOKEN):
+            self.send_json(401, {
+                "ok": False,
+                "error": "unauthorized — copy the token geofence_panel.py "
+                         "printed at startup into the app's Token field",
+            })
+            return False
+        return True
+
     def do_GET(self):
-        if self.path == "/status":
+        if not self.gate():
+            return
+        if self.path in ("/status", "/"):
             self.send_json(200, {"ok": True, **STATE.snapshot()})
             return
-        gpx = GPX_PATH.read_text() if GPX_PATH.exists() else "(missing)"
-        self.send_json(200, {"ok": True, "gpx_path": str(GPX_PATH), "gpx": gpx,
-                             **STATE.snapshot()})
+        self.send_json(404, {"ok": False, "error": "unknown endpoint"})
 
     def do_POST(self):
+        if not self.gate():
+            return
+        if self.path in ("/pause", "/resume"):
+            self.send_json(200, {"ok": True, **toggle_pause(self.path == "/pause")})
+            return
         if self.path == "/stop":
             stop_all()
             self.send_json(200, {"ok": True, "stopped": True})
@@ -317,50 +493,120 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/update":
             self.send_json(404, {"ok": False, "error": "unknown endpoint"})
             return
+
+        ctype = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self.send_json(415, {"ok": False,
+                                 "error": "Content-Type must be application/json"})
+            return
         try:
-            length = int(self.headers.get("Content-Length", 0))
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self.send_json(411, {"ok": False, "error": "Content-Length required"})
+            return
+        if length < 0 or length > MAX_BODY_BYTES:
+            # Refuse before reading, so a huge claimed body costs us nothing.
+            self.send_json(413, {"ok": False, "error": "request body too large"})
+            return
+
+        try:
             data = json.loads(self.rfile.read(length))
             lat1, lon1 = float(data["start_lat"]), float(data["start_lon"])
             lat2, lon2 = float(data["end_lat"]), float(data["end_lon"])
             radius = float(data["radius"])
+            speed = float(data.get("speed", WALK_SPEED))
+            # isfinite matters: float("nan") parses fine, and every comparison
+            # against NaN is False, which would silently disable zone entry.
+            for value in (lat1, lon1, lat2, lon2, radius, speed):
+                if not math.isfinite(value):
+                    raise ValueError("values must be finite numbers")
             for lat, lon in ((lat1, lon1), (lat2, lon2)):
                 if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                     raise ValueError("coordinates out of range")
-            if radius <= 0:
-                raise ValueError("radius must be positive")
+            if not 0 < radius <= MAX_RADIUS_M:
+                raise ValueError(f"radius must be between 0 and {MAX_RADIUS_M} m")
+            if not 0 < speed <= MAX_SPEED:
+                raise ValueError(f"speed must be between 0 and {MAX_SPEED} m/s")
+            total = haversine_m(lat1, lon1, lat2, lon2)
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             self.send_json(400, {"ok": False, "error": f"bad request: {exc}"})
             return
 
-        total = haversine_m(lat1, lon1, lat2, lon2)
-        duration = total / WALK_SPEED
+        steps = route_steps(total, speed)
+        duration = steps * TICK_SECONDS
+        effective = total / duration if duration else 0.0
+        mode = "running" if speed > WALK_SPEED else "walking"
         write_gpx(lat1, lon1, lat2, lon2, duration)
         print(f"  GPX updated: {lat1},{lon1} -> {lat2},{lon2} "
-              f"({total:.0f}m, ~{duration:.0f}s walk, zone {radius:.0f}m)")
-        start_walk(lat1, lon1, lat2, lon2, radius)
+              f"({total:.0f}m, ~{duration:.0f}s {mode} at {effective:.1f} m/s, "
+              f"zone {radius:.0f}m)")
+        start_walk(lat1, lon1, lat2, lon2, radius, speed)
         threading.Thread(
             target=lambda: STATE.set_device(
-                start_device_play(lat1, lon1, lat2, lon2)),
+                start_device_play(lat1, lon1, lat2, lon2, speed)),
             daemon=True,
         ).start()
         self.send_json(200, {
             "ok": True,
             "distance_m": round(total),
             "duration_s": round(duration),
-            "applied": f"walking {total:.0f}m, ~{duration:.0f}s",
+            "speed_mps": round(effective, 2),
+            "applied": (f"{mode} {total / 1000:.0f}km, ~{duration:.0f}s "
+                        f"at {effective:.0f} m/s (compressed)"
+                        if effective > speed * 1.05 else
+                        f"{mode} {total:.0f}m, ~{duration:.0f}s"),
         })
 
 
+def make_server(addr):
+    """One listener per address family.
+
+    `localhost` resolves to ::1 before 127.0.0.1 on iOS, so an IPv4-only
+    socket makes the app fail its first connection attempt (visible in Xcode
+    as nw_endpoint_flow_failed_with_error on ::1). Binding both loopback
+    addresses keeps that from happening without widening exposure.
+    """
+    family = socket.AF_INET6 if ":" in addr else socket.AF_INET
+    server_class = type("GeofenceServer", (ThreadingHTTPServer,), {
+        "address_family": family,
+        "daemon_threads": True,
+        "allow_reuse_address": True,
+    })
+    return server_class((addr, PORT), Handler)
+
+
 def main():
-    print(f"Geofence panel helper on http://0.0.0.0:{PORT}")
+    binds = ["0.0.0.0", "::"] if LAN_MODE else ["127.0.0.1", "::1"]
+    print(f"Geofence panel helper on http://{binds[0]}:{PORT} "
+          f"(also {binds[1]})")
     print(f"GPX file: {GPX_PATH}")
     print(f"Walk speed: {WALK_SPEED} m/s")
+    print()
+    print(f"  TOKEN: {TOKEN}")
+    print("  Paste this into the app's Token field (saved in .geofence_token).")
+    if LAN_MODE:
+        print("  --lan: reachable from your local network. Traffic is plain "
+              "HTTP, so avoid this on untrusted Wi-Fi.")
+    else:
+        print("  Loopback only. Pass --lan to test on a physical iPhone.")
+    print()
     print("Waiting for 'Update geofence' from the app... (Ctrl+C to stop)")
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    servers = []
+    for addr in binds:
+        try:
+            servers.append(make_server(addr))
+        except OSError as exc:
+            print(f"  note: could not listen on {addr} ({exc})")
+    if not servers:
+        sys.exit("Could not bind any address.")
+    for server in servers[1:]:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        server.serve_forever()
+        servers[0].serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
+        for server in servers:
+            server.shutdown()
 
 
 if __name__ == "__main__":

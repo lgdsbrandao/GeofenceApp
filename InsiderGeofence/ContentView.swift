@@ -28,18 +28,22 @@ final class OriginalLocationTracker: NSObject, ObservableObject, CLLocationManag
     }
 }
 
+private let walkSpeedMps = 1.4
+private let runSpeedMps = 10.0
+
 struct ContentView: View {
     @StateObject private var originalTracker = OriginalLocationTracker()
-    @State private var startLatitude: String = "-23.533976"
-    @State private var startLongitude: String = "-46.573602"
-    @State private var endLatitude: String = "-23.533976"
-    @State private var endLongitude: String = "-46.578507"
+    @State private var startLatitude: String = "-23.639687"
+    @State private var startLongitude: String = "-46.722662"
+    @State private var endLatitude: String = "-23.638739"
+    @State private var endLongitude: String = "-46.721797"
     @State private var zoneRadius: String = "100"
     #if targetEnvironment(simulator)
     @AppStorage("helperHost") private var helperHost: String = "localhost"
     #else
     @AppStorage("helperHost") private var helperHost: String = ""
     #endif
+    @AppStorage("helperToken") private var helperToken: String = ""
     @State private var statusMessage: String = ""
     @State private var statusIsError: Bool = false
     @State private var isSending: Bool = false
@@ -49,6 +53,17 @@ struct ContentView: View {
         span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
     )
     @State private var mapTrackingMode: MapUserTrackingMode = .follow
+    @State private var showSettings: Bool = false
+    /// Which pace the in-flight or active route is using.
+    @State private var runMode: Bool = false
+    @State private var isPaused: Bool = false
+    @State private var authFailed: Bool = false
+
+    /// The token is a set-once value, so it stays hidden unless it is still
+    /// missing, the helper rejected it, or you open settings to change it.
+    private var showsTokenField: Bool {
+        showSettings || authFailed || helperToken.isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -67,12 +82,21 @@ struct ContentView: View {
     // MARK: - Sections
 
     private var header: some View {
-        VStack(spacing: 2) {
-            Text("Geofence Panel")
-                .font(.headline)
-            Text("Walks start → end at ~1.4 m/s and reports zone entry.")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+        ZStack(alignment: .trailing) {
+            VStack(spacing: 2) {
+                Text("Geofence Panel")
+                    .font(.headline)
+                Text("Walk 1.4 m/s or run 10 m/s from start to end; reports zone entry.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+
+            Button(action: { withAnimation { showSettings.toggle() } }) {
+                Image(systemName: showSettings ? "gearshape.fill" : "gearshape")
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 12)
+            }
         }
     }
 
@@ -131,6 +155,19 @@ struct ContentView: View {
                 fieldBox($helperHost, placeholder: "192.168.x.x", keyboard: .URL)
                     .frame(width: 180)
             }
+            if showsTokenField {
+                Divider()
+                HStack {
+                    HStack(spacing: 6) {
+                        Image(systemName: "key.fill")
+                            .foregroundColor(authFailed ? .red : .blue)
+                        Text("Token").font(.subheadline.bold())
+                    }
+                    Spacer()
+                    fieldBox($helperToken, placeholder: "from helper startup", keyboard: .asciiCapable)
+                        .frame(width: 180)
+                }
+            }
         }
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground))
@@ -139,23 +176,23 @@ struct ContentView: View {
 
     private var actionButtons: some View {
         VStack(spacing: 8) {
-            Button(action: updateGeofence) {
-                HStack {
-                    if isSending {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "figure.walk")
-                        Text(isWalking ? "Walking… (tap to restart)" : "Update geofence")
-                            .fontWeight(.semibold)
+            HStack(spacing: 8) {
+                paceButton(title: "Walk", icon: "figure.walk",
+                           color: .blue, isRun: false)
+                paceButton(title: "Run", icon: "figure.run",
+                           color: .orange, isRun: true)
+                if isWalking {
+                    Button(action: togglePause) {
+                        Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                            .frame(width: 46)
+                            .padding(.vertical, 12)
                     }
+                    .background(isPaused ? Color.green : Color.red)
+                    .foregroundColor(.white)
+                    .cornerRadius(14)
+                    .disabled(isSending)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
             }
-            .background(Color.blue)
-            .foregroundColor(.white)
-            .cornerRadius(14)
-            .disabled(isSending)
 
             Button(action: goToOriginalLocation) {
                 HStack {
@@ -173,6 +210,28 @@ struct ContentView: View {
             .cornerRadius(14)
             .disabled(isSending || originalTracker.original == nil)
         }
+    }
+
+    private func paceButton(title: String, icon: String,
+                            color: Color, isRun: Bool) -> some View {
+        let active = isWalking && runMode == isRun
+        return Button(action: { updateGeofence(running: isRun) }) {
+            HStack(spacing: 6) {
+                if isSending && runMode == isRun {
+                    ProgressView()
+                } else {
+                    Image(systemName: icon)
+                    Text(active ? (isRun ? "Running…" : "Walking…") : title)
+                        .fontWeight(.semibold)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+        }
+        .background(color)
+        .foregroundColor(.white)
+        .cornerRadius(14)
+        .disabled(isSending)
     }
 
     @ViewBuilder
@@ -223,7 +282,7 @@ struct ContentView: View {
 
     // MARK: - Actions
 
-    private func updateGeofence() {
+    private func updateGeofence(running: Bool) {
         guard let startLat = parse(startLatitude, range: -90.0...90.0),
               let endLat = parse(endLatitude, range: -90.0...90.0) else {
             showStatus("Latitudes must be numbers between -90 and 90.", isError: true)
@@ -238,12 +297,50 @@ struct ContentView: View {
             showStatus("Radius must be a positive number of meters.", isError: true)
             return
         }
+        runMode = running
         sendRoute(startLat: startLat, startLon: startLon,
-                  endLat: endLat, endLon: endLon, radius: radius) { distance, duration in
+                  endLat: endLat, endLon: endLon, radius: radius,
+                  speed: running ? runSpeedMps : walkSpeedMps) { distance, duration in
             isWalking = true
-            showStatus("Walk started: \(distance)m, ~\(duration)s. Zone radius \(Int(radius))m.", isError: false)
+            isPaused = false
+            let verb = running ? "Run" : "Walk"
+            showStatus("\(verb) started: \(distance)m, ~\(duration)s. Zone radius \(Int(radius))m.", isError: false)
             pollStatus(host: helperHost.trimmingCharacters(in: .whitespaces))
         }
+    }
+
+    /// Freeze the route in place, or continue it. This does not clear the
+    /// fake location — the device stays where the walk left it.
+    private func togglePause() {
+        let host = helperHost.trimmingCharacters(in: .whitespaces)
+        let path = isPaused ? "resume" : "pause"
+        guard let url = URL(string: "http://\(host):8766/\(path)") else {
+            showStatus("Invalid helper host.", isError: true)
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
+        request.timeoutInterval = 15
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    showStatus("Could not reach helper on \(host):8766 (\(error.localizedDescription))", isError: true)
+                    return
+                }
+                guard let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      json["ok"] as? Bool == true else {
+                    noteAuthFailure(response)
+                    showStatus("Helper rejected the pause request.", isError: true)
+                    return
+                }
+                withAnimation { isPaused = json["paused"] as? Bool ?? false }
+                if !isPaused {
+                    pollStatus(host: host)
+                }
+            }
+        }.resume()
     }
 
     private func goToOriginalLocation() {
@@ -252,7 +349,7 @@ struct ContentView: View {
         isWalking = false
         sendRoute(startLat: original.latitude, startLon: original.longitude,
                   endLat: original.latitude, endLon: original.longitude,
-                  radius: radius) { _, _ in
+                  radius: radius, speed: walkSpeedMps) { _, _ in
             showStatus(String(format: "Back at original location (%.6f, %.6f).",
                               original.latitude, original.longitude), isError: false)
         }
@@ -260,6 +357,7 @@ struct ContentView: View {
 
     private func sendRoute(startLat: Double, startLon: Double,
                            endLat: Double, endLon: Double, radius: Double,
+                           speed: Double,
                            onSuccess: @escaping (Int, Int) -> Void) {
         let host = helperHost.trimmingCharacters(in: .whitespaces)
         guard let url = URL(string: "http://\(host):8766/update") else {
@@ -269,16 +367,17 @@ struct ContentView: View {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
         request.timeoutInterval = 15
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
             "start_lat": startLat, "start_lon": startLon,
             "end_lat": endLat, "end_lon": endLon,
-            "radius": radius,
+            "radius": radius, "speed": speed,
         ])
 
         isSending = true
         statusMessage = ""
-        URLSession.shared.dataTask(with: request) { data, _, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 isSending = false
                 if let error = error {
@@ -291,9 +390,11 @@ struct ContentView: View {
                     return
                 }
                 if json["ok"] as? Bool == true {
+                    authFailed = false
                     onSuccess(json["distance_m"] as? Int ?? 0,
                               json["duration_s"] as? Int ?? 0)
                 } else {
+                    noteAuthFailure(response)
                     showStatus(json["error"] as? String ?? "Helper reported an error.", isError: true)
                 }
             }
@@ -302,23 +403,37 @@ struct ContentView: View {
 
     private func pollStatus(host: String) {
         guard isWalking, let url = URL(string: "http://\(host):8766/status") else { return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
+        var request = URLRequest(url: url)
+        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
+        request.timeoutInterval = 15
+        URLSession.shared.dataTask(with: request) { data, response, _ in
             DispatchQueue.main.async {
                 guard isWalking else { return }
                 if let data = data,
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    guard json["ok"] as? Bool == true else {
+                        isWalking = false
+                        noteAuthFailure(response)
+                        showStatus(json["error"] as? String ?? "Helper rejected the status request.",
+                                   isError: true)
+                        return
+                    }
                     let walking = json["walking"] as? Bool ?? false
                     let entered = json["entered"] as? Bool ?? false
                     let remaining = json["remaining_m"] as? Double ?? 0
                     let device = (json["device"] as? String).map { "\niPhone: \($0)" } ?? ""
+                    isPaused = json["paused"] as? Bool ?? false
                     if walking {
-                        if entered {
+                        if isPaused {
+                            showStatus("Paused — \(Int(remaining))m to destination. Tap ▶ to continue.\(device)", isError: false)
+                        } else if entered {
                             showStatus("🎯 Entered the geofence zone! Still walking — \(Int(remaining))m to destination.\(device)", isError: false)
                         } else {
-                            showStatus("Walking… \(Int(remaining))m to destination.\(device)", isError: false)
+                            showStatus("\(runMode ? "Running" : "Walking")… \(Int(remaining))m to destination.\(device)", isError: false)
                         }
                     } else {
                         isWalking = false
+                        isPaused = false
                         showStatus(entered
                                    ? "🎯 Arrived — geofence zone entered."
                                    : "Walk finished (zone never entered).", isError: false)
@@ -330,6 +445,13 @@ struct ContentView: View {
                 }
             }
         }.resume()
+    }
+
+    /// Reveal the token field again when the helper says the token is wrong.
+    private func noteAuthFailure(_ response: URLResponse?) {
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            withAnimation { authFailed = true }
+        }
     }
 
     private func parse(_ text: String, range: ClosedRange<Double>) -> Double? {
