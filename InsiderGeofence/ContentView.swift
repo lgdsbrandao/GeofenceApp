@@ -28,163 +28,292 @@ final class OriginalLocationTracker: NSObject, ObservableObject, CLLocationManag
     }
 }
 
+/// One zone as returned by Insider's geofence API.
+struct InsiderZone: Decodable, Identifiable {
+    let id: Int
+    let identifier: String
+    let latitude: Double
+    let longitude: Double
+    let radius: Double
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
+    /// Where a test run begins and ends.
+    ///
+    /// Entry fires as soon as the boundary is crossed, but iOS only confirms
+    /// an *exit* well beyond it: measured at 417 m leaving a 200 m fence,
+    /// roughly twice the radius. Starting — and returning to — 2.5x the radius
+    /// clears that hysteresis so the exit actually fires. The 300 m floor
+    /// covers small zones, where the buffer does not scale down.
+    var startDistance: Double { max(radius * 2.5, radius + 300) }
+
+    var startCoordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(
+            latitude: latitude + startDistance / 111_320.0,
+            longitude: longitude)
+    }
+}
+
+private struct ZoneListResponse: Decodable {
+    let geofences: [InsiderZone]
+}
+
+private let insiderPartner = "oxttest"
+private let insiderZonesURL = "https://mobile.useinsider.com/api/v1/geofences"
+/// Which modal is up. A single sheet driver avoids the iOS 14 behaviour
+/// where only the last `.sheet(isPresented:)` on a view actually presents.
+private enum PanelSheet: Int, Identifiable {
+    case zones, settings
+    var id: Int { rawValue }
+}
+
 private let walkSpeedMps = 1.4
 private let runSpeedMps = 10.0
 
 struct ContentView: View {
     @StateObject private var originalTracker = OriginalLocationTracker()
-    @State private var startLatitude: String = "-23.639687"
-    @State private var startLongitude: String = "-46.722662"
-    @State private var endLatitude: String = "-23.638739"
-    @State private var endLongitude: String = "-46.721797"
-    @State private var zoneRadius: String = "100"
+
     #if targetEnvironment(simulator)
     @AppStorage("helperHost") private var helperHost: String = "localhost"
     #else
     @AppStorage("helperHost") private var helperHost: String = ""
     #endif
     @AppStorage("helperToken") private var helperToken: String = ""
-    @State private var statusMessage: String = ""
-    @State private var statusIsError: Bool = false
-    @State private var isSending: Bool = false
-    @State private var isWalking: Bool = false
-    @State private var mapRegion = MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: -23.533976, longitude: -46.573602),
-        span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-    )
-    @State private var mapTrackingMode: MapUserTrackingMode = .follow
-    @State private var showSettings: Bool = false
-    /// Which pace the in-flight or active route is using.
-    @State private var runMode: Bool = false
-    @State private var isPaused: Bool = false
-    @State private var authFailed: Bool = false
+    @AppStorage("partnerBundleID") private var partnerBundleID: String = "com.useinsider.mobile-ios"
 
-    /// The token is a set-once value, so it stays hidden unless it is still
-    /// missing, the helper rejected it, or you open settings to change it.
-    private var showsTokenField: Bool {
-        showSettings || authFailed || helperToken.isEmpty
-    }
+    @State private var zones: [InsiderZone] = []
+    @State private var selectedZone: InsiderZone?
+    @State private var isLoadingZones = false
+    @State private var activeSheet: PanelSheet?
+
+    @State private var statusMessage = ""
+    @State private var statusIsError = false
+    @State private var isSending = false
+    @State private var isRunning = false
+    @State private var isPaused = false
+    @State private var runMode = false
+    @State private var entered = false
+    @State private var exited = false
+    @State private var leg = "out"
+    @State private var metresFromCentre: Double?
+
+    @State private var authFailed = false
 
     var body: some View {
         VStack(spacing: 10) {
             header
-            mapCard
-            routeCard
-            settingsCard
+            ZoneMapView(zone: selectedZone,
+                        startCoordinate: selectedZone?.startCoordinate)
+                .frame(minHeight: 120, maxHeight: .infinity)
+                .cornerRadius(16)
+            zoneCard
+            progressCard
             actionButtons
-            statusCard
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .zones: zoneList
+            case .settings: settingsSheet
+            }
+        }
     }
 
-    // MARK: - Sections
+    // MARK: - Header
 
     private var header: some View {
-        ZStack(alignment: .trailing) {
-            VStack(spacing: 2) {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
                 Text("Geofence Panel")
                     .font(.headline)
-                Text("Walk 1.4 m/s or run 10 m/s from start to end; reports zone entry.")
+                Text(selectedZone == nil
+                     ? "Pick a zone to test"
+                     : "Walk in and back out to fire enter + exit")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            .frame(maxWidth: .infinity)
-
-            Button(action: { withAnimation { showSettings.toggle() } }) {
-                Image(systemName: showSettings ? "gearshape.fill" : "gearshape")
-                    .foregroundColor(.secondary)
-                    .padding(.leading, 12)
+            Spacer()
+            Button(action: { activeSheet = .settings }) {
+                Image(systemName: "gearshape")
+                    .foregroundColor(authFailed ? .red : .secondary)
             }
         }
     }
 
-    private var mapCard: some View {
-        Map(coordinateRegion: $mapRegion,
-            showsUserLocation: true,
-            userTrackingMode: $mapTrackingMode)
-            .frame(minHeight: 90, maxHeight: .infinity)
-            .cornerRadius(16)
-    }
+    // MARK: - Zone
 
-    private var routeCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "circle.circle.fill")
-                    .foregroundColor(.green)
-                Text("Start").font(.subheadline.bold())
-            }
-            coordinatePair($startLatitude, $startLongitude)
-
-            Divider()
-
-            HStack(spacing: 6) {
-                Image(systemName: "mappin.circle.fill")
-                    .foregroundColor(.red)
-                Text("End").font(.subheadline.bold())
-            }
-            coordinatePair($endLatitude, $endLongitude)
-        }
-        .padding(12)
-        .background(Color(.secondarySystemGroupedBackground))
-        .cornerRadius(16)
-    }
-
-    private var settingsCard: some View {
-        VStack(spacing: 8) {
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "dot.circle.and.hand.point.up.left.fill")
-                        .foregroundColor(.blue)
-                    Text("Zone radius").font(.subheadline.bold())
-                }
-                Spacer()
-                fieldBox($zoneRadius, placeholder: "100", keyboard: .numbersAndPunctuation)
-                    .frame(width: 100)
-                Text("m").foregroundColor(.secondary)
-            }
-            Divider()
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "desktopcomputer")
-                        .foregroundColor(.blue)
-                    Text("Mac helper").font(.subheadline.bold())
-                }
-                Spacer()
-                fieldBox($helperHost, placeholder: "192.168.x.x", keyboard: .URL)
-                    .frame(width: 180)
-            }
-            if showsTokenField {
-                Divider()
-                HStack {
-                    HStack(spacing: 6) {
-                        Image(systemName: "key.fill")
-                            .foregroundColor(authFailed ? .red : .blue)
-                        Text("Token").font(.subheadline.bold())
+    private var zoneCard: some View {
+        Button(action: fetchZones) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Color.blue.opacity(0.15))
+                        .frame(width: 38, height: 38)
+                    if isLoadingZones {
+                        ProgressView()
+                    } else {
+                        Image(systemName: selectedZone == nil
+                              ? "mappin.and.ellipse" : "scope")
+                            .foregroundColor(.blue)
                     }
-                    Spacer()
-                    fieldBox($helperToken, placeholder: "from helper startup", keyboard: .asciiCapable)
-                        .frame(width: 180)
                 }
+
+                if let zone = selectedZone {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(zone.identifier)
+                            .font(.subheadline.bold())
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                        Text(String(format: "r %.0f m · start %.0f m out · in and back",
+                                    zone.radius, zone.startDistance))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Choose a geofence")
+                            .font(.subheadline.bold())
+                            .foregroundColor(.primary)
+                        Text("Loads the zones configured for \(insiderPartner)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground))
+            .cornerRadius(16)
+        }
+        .disabled(isLoadingZones)
+    }
+
+    // MARK: - Progress
+
+    private var progressCard: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                eventPill(title: "ENTER", done: entered, tint: .green)
+                eventPill(title: "EXIT", done: exited, tint: .blue)
+            }
+            HStack(spacing: 6) {
+                if !statusMessage.isEmpty {
+                    Image(systemName: statusIsError
+                          ? "exclamationmark.triangle.fill" : "info.circle")
+                        .font(.caption2)
+                    Text(statusMessage)
+                        .font(.caption2)
+                        .lineLimit(2)
+                } else if let metres = metresFromCentre {
+                    Text(String(format: "%.0f m from centre · heading %@",
+                                metres, leg == "back" ? "out" : "in"))
+                        .font(.caption2)
+                } else {
+                    Text("Idle").font(.caption2)
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundColor(statusIsError ? .red : .secondary)
         }
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground))
         .cornerRadius(16)
     }
+
+    private func eventPill(title: String, done: Bool, tint: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .foregroundColor(done ? tint : Color.secondary.opacity(0.5))
+            Text(title)
+                .font(.caption.bold())
+                .foregroundColor(done ? tint : .secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background((done ? tint : Color.secondary).opacity(done ? 0.15 : 0.08))
+        .cornerRadius(10)
+    }
+
+    // MARK: - Settings
+
+    private var settingsSheet: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Connection"),
+                        footer: Text("The token is printed by geofence_panel.py "
+                                     + "when it starts.")) {
+                    labelledField("Mac helper", systemImage: "desktopcomputer",
+                                  binding: $helperHost,
+                                  placeholder: "192.168.x.x", keyboard: .URL)
+                    labelledField("Token", systemImage: "key.fill",
+                                  binding: $helperToken,
+                                  placeholder: "from helper startup",
+                                  keyboard: .asciiCapable,
+                                  tint: authFailed ? .red : .primary)
+                }
+
+                Section(header: Text("Partner app"),
+                        footer: Text("iOS monitors at most 20 regions per app and "
+                                     + "keeps them across launches, so a zone added "
+                                     + "later is refused until the app is "
+                                     + "reinstalled. This reinstalls it from its own "
+                                     + "binary — no source needed — and clears its "
+                                     + "local data.")) {
+                    labelledField("Bundle id", systemImage: "app.badge",
+                                  binding: $partnerBundleID,
+                                  placeholder: "com.example.app", keyboard: .URL)
+                    Button(action: resetPartnerApp) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text("Reset its geofence registrations")
+                        }
+                        .foregroundColor(.orange)
+                    }
+                    .disabled(isSending)
+                }
+            }
+            .navigationBarTitle(Text("Settings"), displayMode: .inline)
+            .navigationBarItems(trailing: Button("Done") { activeSheet = nil })
+        }
+    }
+
+    private func labelledField(_ title: String, systemImage: String,
+                               binding: Binding<String>, placeholder: String,
+                               keyboard: UIKeyboardType,
+                               tint: Color = .primary) -> some View {
+        HStack {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline)
+                .foregroundColor(tint)
+            Spacer()
+            TextField(placeholder, text: binding)
+                .keyboardType(keyboard)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .multilineTextAlignment(.trailing)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    // MARK: - Actions
 
     private var actionButtons: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                paceButton(title: "Walk", icon: "figure.walk",
-                           color: .blue, isRun: false)
-                paceButton(title: "Run", icon: "figure.run",
-                           color: .orange, isRun: true)
-                if isWalking {
+                paceButton(title: "Walk", icon: "figure.walk", color: .blue, isRun: false)
+                paceButton(title: "Run", icon: "figure.run", color: .orange, isRun: true)
+                if isRunning {
                     Button(action: togglePause) {
                         Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                            .frame(width: 46)
+                            .frame(width: 44)
                             .padding(.vertical, 12)
                     }
                     .background(isPaused ? Color.green : Color.red)
@@ -193,7 +322,6 @@ struct ContentView: View {
                     .disabled(isSending)
                 }
             }
-
             Button(action: goToOriginalLocation) {
                 HStack {
                     Image(systemName: "location.circle")
@@ -214,8 +342,8 @@ struct ContentView: View {
 
     private func paceButton(title: String, icon: String,
                             color: Color, isRun: Bool) -> some View {
-        let active = isWalking && runMode == isRun
-        return Button(action: { updateGeofence(running: isRun) }) {
+        let active = isRunning && runMode == isRun
+        return Button(action: { startTest(running: isRun) }) {
             HStack(spacing: 6) {
                 if isSending && runMode == isRun {
                     ProgressView()
@@ -231,233 +359,243 @@ struct ContentView: View {
         .background(color)
         .foregroundColor(.white)
         .cornerRadius(14)
-        .disabled(isSending)
+        .disabled(isSending || selectedZone == nil)
     }
 
-    @ViewBuilder
-    private var statusCard: some View {
-        if !statusMessage.isEmpty {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: statusIsError
-                      ? "exclamationmark.triangle.fill"
-                      : "checkmark.circle.fill")
-                Text(statusMessage)
-                    .font(.footnote)
-                    .multilineTextAlignment(.leading)
-                Spacer(minLength: 0)
+    // MARK: - Zone list
+
+    private var zoneList: some View {
+        NavigationView {
+            List(zones) { zone in
+                Button(action: { select(zone) }) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(zone.identifier)
+                                .font(.subheadline.bold())
+                                .foregroundColor(.primary)
+                            Text(String(format: "%.5f, %.5f  ·  r %.0f m",
+                                        zone.latitude, zone.longitude, zone.radius))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: selectedZone?.id == zone.id
+                              ? "checkmark.circle.fill" : "arrow.right.circle")
+                            .foregroundColor(.blue)
+                    }
+                }
             }
-            .foregroundColor(statusIsError ? .red : .green)
-            .padding(12)
-            .background((statusIsError ? Color.red : Color.green).opacity(0.12))
-            .cornerRadius(12)
+            .navigationBarTitle(Text("\(zones.count) geofences"), displayMode: .inline)
         }
     }
 
-    // MARK: - Field helpers
-
-    private func coordinatePair(_ lat: Binding<String>, _ lon: Binding<String>) -> some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Latitude").font(.caption2).foregroundColor(.secondary)
-                fieldBox(lat, placeholder: "0.0", keyboard: .numbersAndPunctuation)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Longitude").font(.caption2).foregroundColor(.secondary)
-                fieldBox(lon, placeholder: "0.0", keyboard: .numbersAndPunctuation)
-            }
-        }
+    private func select(_ zone: InsiderZone) {
+        selectedZone = zone
+        entered = false
+        exited = false
+        metresFromCentre = nil
+        activeSheet = nil
+        showStatus("\(zone.identifier) ready — \(Int(zone.startDistance)) m out, in and back.",
+                   isError: false)
     }
 
-    private func fieldBox(_ binding: Binding<String>, placeholder: String,
-                          keyboard: UIKeyboardType) -> some View {
-        TextField(placeholder, text: binding)
-            .keyboardType(keyboard)
-            .autocapitalization(.none)
-            .disableAutocorrection(true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Color(.tertiarySystemFill))
-            .cornerRadius(8)
-    }
+    // MARK: - Networking
 
-    // MARK: - Actions
+    /// Zones are searched around wherever the device currently is.
+    private func fetchZones() {
+        let here = originalTracker.original
+            ?? selectedZone?.coordinate
+            ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        guard let url = URL(string: insiderZonesURL) else { return }
 
-    private func updateGeofence(running: Bool) {
-        guard let startLat = parse(startLatitude, range: -90.0...90.0),
-              let endLat = parse(endLatitude, range: -90.0...90.0) else {
-            showStatus("Latitudes must be numbers between -90 and 90.", isError: true)
-            return
-        }
-        guard let startLon = parse(startLongitude, range: -180.0...180.0),
-              let endLon = parse(endLongitude, range: -180.0...180.0) else {
-            showStatus("Longitudes must be numbers between -180 and 180.", isError: true)
-            return
-        }
-        guard let radius = parse(zoneRadius, range: 0.001...1_000_000) else {
-            showStatus("Radius must be a positive number of meters.", isError: true)
-            return
-        }
-        runMode = running
-        sendRoute(startLat: startLat, startLon: startLon,
-                  endLat: endLat, endLon: endLon, radius: radius,
-                  speed: running ? runSpeedMps : walkSpeedMps) { distance, duration in
-            isWalking = true
-            isPaused = false
-            let verb = running ? "Run" : "Walk"
-            showStatus("\(verb) started: \(distance)m, ~\(duration)s. Zone radius \(Int(radius))m.", isError: false)
-            pollStatus(host: helperHost.trimmingCharacters(in: .whitespaces))
-        }
-    }
-
-    /// Freeze the route in place, or continue it. This does not clear the
-    /// fake location — the device stays where the walk left it.
-    private func togglePause() {
-        let host = helperHost.trimmingCharacters(in: .whitespaces)
-        let path = isPaused ? "resume" : "pause"
-        guard let url = URL(string: "http://\(host):8766/\(path)") else {
-            showStatus("Invalid helper host.", isError: true)
-            return
-        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
-        request.timeoutInterval = 15
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 20
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "partner_name": insiderPartner,
+            "user_location": ["latitude": String(here.latitude),
+                              "longitude": String(here.longitude)],
+        ])
+
+        isLoadingZones = true
+        URLSession.shared.dataTask(with: request) { data, _, error in
             DispatchQueue.main.async {
+                isLoadingZones = false
                 if let error = error {
-                    showStatus("Could not reach helper on \(host):8766 (\(error.localizedDescription))", isError: true)
+                    showStatus("Could not load geofences: \(error.localizedDescription)",
+                               isError: true)
                     return
                 }
                 guard let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      json["ok"] as? Bool == true else {
-                    noteAuthFailure(response)
-                    showStatus("Helper rejected the pause request.", isError: true)
+                      let decoded = try? JSONDecoder().decode(ZoneListResponse.self,
+                                                              from: data) else {
+                    showStatus("Unexpected response from the geofence API.", isError: true)
                     return
                 }
-                withAnimation { isPaused = json["paused"] as? Bool ?? false }
-                if !isPaused {
-                    pollStatus(host: host)
+                zones = decoded.geofences
+                if zones.isEmpty {
+                    showStatus("No geofences configured for \(insiderPartner).", isError: false)
+                } else {
+                    activeSheet = .zones
                 }
             }
         }.resume()
+    }
+
+    private func startTest(running: Bool) {
+        guard let zone = selectedZone else { return }
+        runMode = running
+        entered = false
+        exited = false
+        let start = zone.startCoordinate
+
+        send(path: "update", body: [
+            "start_lat": start.latitude, "start_lon": start.longitude,
+            "end_lat": zone.latitude, "end_lon": zone.longitude,
+            "radius": zone.radius,
+            "speed": running ? runSpeedMps : walkSpeedMps,
+            "return_to_start": true,
+        ]) { json in
+            isRunning = true
+            isPaused = false
+            let seconds = json["duration_s"] as? Int ?? 0
+            showStatus("\(running ? "Running" : "Walking") the round trip, ~\(seconds)s.",
+                       isError: false)
+            pollStatus()
+        }
     }
 
     private func goToOriginalLocation() {
         guard let original = originalTracker.original else { return }
-        let radius = parse(zoneRadius, range: 0.001...1_000_000) ?? 100
-        isWalking = false
-        sendRoute(startLat: original.latitude, startLon: original.longitude,
-                  endLat: original.latitude, endLon: original.longitude,
-                  radius: radius, speed: walkSpeedMps) { _, _ in
-            showStatus(String(format: "Back at original location (%.6f, %.6f).",
+        isRunning = false
+        send(path: "update", body: [
+            "start_lat": original.latitude, "start_lon": original.longitude,
+            "end_lat": original.latitude, "end_lon": original.longitude,
+            "radius": selectedZone?.radius ?? 100,
+            "speed": walkSpeedMps, "return_to_start": false,
+        ]) { _ in
+            entered = false
+            exited = false
+            metresFromCentre = nil
+            showStatus(String(format: "Back at original location (%.5f, %.5f).",
                               original.latitude, original.longitude), isError: false)
         }
     }
 
-    private func sendRoute(startLat: Double, startLon: Double,
-                           endLat: Double, endLon: Double, radius: Double,
-                           speed: Double,
-                           onSuccess: @escaping (Int, Int) -> Void) {
+    /// iOS caps monitored regions at 20 per app and keeps them across
+    /// launches. When a partner SDK re-registers without releasing the old
+    /// ones, newly added geofences are refused forever. We cannot clear
+    /// another app's regions from outside it, so the helper reinstalls the app
+    /// from its own installed binary — no source access needed.
+    private func resetPartnerApp() {
+        let bundle = partnerBundleID.trimmingCharacters(in: .whitespaces)
+        guard !bundle.isEmpty else {
+            showStatus("Enter the partner app's bundle id first.", isError: true)
+            return
+        }
+        send(path: "reset-app", body: ["bundle_id": bundle]) { json in
+            let detail = json["detail"] as? String ?? "done"
+            showStatus("\(bundle) reset — \(detail). Its geofences re-register "
+                       + "on this launch.", isError: false)
+        }
+    }
+
+    private func togglePause() {
+        send(path: isPaused ? "resume" : "pause", body: nil) { json in
+            withAnimation { isPaused = json["paused"] as? Bool ?? false }
+            if isPaused {
+                showStatus("Paused — tap ▶ to continue.", isError: false)
+            } else {
+                statusMessage = ""
+                pollStatus()
+            }
+        }
+    }
+
+    /// One place that talks to the helper, so auth and errors behave the same
+    /// for every action.
+    private func send(path: String, body: [String: Any]?,
+                      onSuccess: @escaping ([String: Any]) -> Void) {
         let host = helperHost.trimmingCharacters(in: .whitespaces)
-        guard let url = URL(string: "http://\(host):8766/update") else {
-            showStatus("Invalid helper host.", isError: true)
+        guard let url = URL(string: "http://\(host):8766/\(path)") else {
+            showStatus("Set the Mac helper address in settings.", isError: true)
             return
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
         request.timeoutInterval = 15
-        request.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "start_lat": startLat, "start_lon": startLon,
-            "end_lat": endLat, "end_lon": endLon,
-            "radius": radius, "speed": speed,
-        ])
+        if let body = body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
 
         isSending = true
-        statusMessage = ""
         URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 isSending = false
                 if let error = error {
-                    showStatus("Could not reach helper on \(host):8766 — is geofence_panel.py running? (\(error.localizedDescription))", isError: true)
+                    showStatus("Cannot reach the helper on \(host):8766 — is "
+                               + "geofence_panel.py running? (\(error.localizedDescription))",
+                               isError: true)
                     return
                 }
                 guard let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    showStatus("Unexpected response from helper.", isError: true)
+                      let json = try? JSONSerialization.jsonObject(with: data)
+                        as? [String: Any] else {
+                    showStatus("Unexpected response from the helper.", isError: true)
                     return
                 }
                 if json["ok"] as? Bool == true {
                     authFailed = false
-                    onSuccess(json["distance_m"] as? Int ?? 0,
-                              json["duration_s"] as? Int ?? 0)
+                    onSuccess(json)
                 } else {
-                    noteAuthFailure(response)
-                    showStatus(json["error"] as? String ?? "Helper reported an error.", isError: true)
+                    if (response as? HTTPURLResponse)?.statusCode == 401 {
+                        authFailed = true
+                        activeSheet = .settings   // the token needs fixing
+                    }
+                    showStatus(json["error"] as? String ?? "The helper reported an error.",
+                               isError: true)
                 }
             }
         }.resume()
     }
 
-    private func pollStatus(host: String) {
-        guard isWalking, let url = URL(string: "http://\(host):8766/status") else { return }
+    private func pollStatus() {
+        let host = helperHost.trimmingCharacters(in: .whitespaces)
+        guard isRunning, let url = URL(string: "http://\(host):8766/status") else { return }
         var request = URLRequest(url: url)
         request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
         request.timeoutInterval = 15
-        URLSession.shared.dataTask(with: request) { data, response, _ in
+
+        URLSession.shared.dataTask(with: request) { data, _, _ in
             DispatchQueue.main.async {
-                guard isWalking else { return }
+                guard isRunning else { return }
                 if let data = data,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    guard json["ok"] as? Bool == true else {
-                        isWalking = false
-                        noteAuthFailure(response)
-                        showStatus(json["error"] as? String ?? "Helper rejected the status request.",
-                                   isError: true)
-                        return
-                    }
-                    let walking = json["walking"] as? Bool ?? false
-                    let entered = json["entered"] as? Bool ?? false
-                    let remaining = json["remaining_m"] as? Double ?? 0
-                    let device = (json["device"] as? String).map { "\niPhone: \($0)" } ?? ""
+                   let json = try? JSONSerialization.jsonObject(with: data)
+                    as? [String: Any],
+                   json["ok"] as? Bool == true {
+                    entered = json["entered"] as? Bool ?? false
+                    exited = json["exited"] as? Bool ?? false
+                    leg = json["leg"] as? String ?? "out"
                     isPaused = json["paused"] as? Bool ?? false
-                    if walking {
-                        if isPaused {
-                            showStatus("Paused — \(Int(remaining))m to destination. Tap ▶ to continue.\(device)", isError: false)
-                        } else if entered {
-                            showStatus("🎯 Entered the geofence zone! Still walking — \(Int(remaining))m to destination.\(device)", isError: false)
-                        } else {
-                            showStatus("\(runMode ? "Running" : "Walking")… \(Int(remaining))m to destination.\(device)", isError: false)
-                        }
-                    } else {
-                        isWalking = false
-                        isPaused = false
+                    metresFromCentre = json["remaining_m"] as? Double
+
+                    if json["walking"] as? Bool == false {
+                        isRunning = false
                         showStatus(entered
-                                   ? "🎯 Arrived — geofence zone entered."
-                                   : "Walk finished (zone never entered).", isError: false)
+                                   ? (exited ? "Done — entered and exited the zone."
+                                             : "Entered the zone, but no exit was recorded.")
+                                   : "Finished without entering the zone.",
+                                   isError: !entered)
                         return
                     }
+                    if !isPaused { statusMessage = "" }
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    pollStatus(host: host)
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { pollStatus() }
             }
         }.resume()
-    }
-
-    /// Reveal the token field again when the helper says the token is wrong.
-    private func noteAuthFailure(_ response: URLResponse?) {
-        if (response as? HTTPURLResponse)?.statusCode == 401 {
-            withAnimation { authFailed = true }
-        }
-    }
-
-    private func parse(_ text: String, range: ClosedRange<Double>) -> Double? {
-        guard let value = Double(text.trimmingCharacters(in: .whitespaces)),
-              range.contains(value) else { return nil }
-        return value
     }
 
     private func showStatus(_ message: String, isError: Bool) {

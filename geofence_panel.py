@@ -40,7 +40,9 @@ import ipaddress
 import json
 import math
 import secrets
+import shutil
 import socket
+import tempfile
 import subprocess
 import sys
 import os
@@ -122,6 +124,24 @@ def route_steps(total_m, speed=WALK_SPEED):
     return min(natural, MAX_STEPS)
 
 
+def route_points(lat1, lon1, lat2, lon2, speed, return_to_start=False):
+    """The full list of per-tick positions for a route.
+
+    A round trip walks out to the destination and back to the start, which is
+    what produces both an enter and an exit event for a real geofence.
+    """
+    def leg(a, b):
+        steps = route_steps(haversine_m(a[0], a[1], b[0], b[1]), speed)
+        return [(a[0] + (b[0] - a[0]) * i / steps,
+                 a[1] + (b[1] - a[1]) * i / steps) for i in range(steps + 1)]
+
+    start, end = (lat1, lon1), (lat2, lon2)
+    points = leg(start, end)
+    if return_to_start:
+        points += leg(end, start)[1:]   # skip the duplicated turnaround point
+    return points
+
+
 def write_gpx(lat1, lon1, lat2, lon2, duration_s):
     t0 = datetime.now(timezone.utc)
     t1 = t0 + timedelta(seconds=max(duration_s, 1))
@@ -184,17 +204,13 @@ DEVICE_PLAY_PROC = None
 DEVICE_LOCK = threading.Lock()
 
 
-def write_device_gpx(lat1, lon1, lat2, lon2, speed=WALK_SPEED):
+def write_device_gpx(lat1, lon1, lat2, lon2, speed=WALK_SPEED, return_to_start=False):
     """Per-second track GPX for pymobiledevice3 `simulate-location play`."""
-    total = haversine_m(lat1, lon1, lat2, lon2)
-    steps = route_steps(total, speed)
     t0 = datetime.now(timezone.utc)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
     points = []
-    for i in range(steps + 1):
-        f = i / steps
-        lat = lat1 + (lat2 - lat1) * f
-        lon = lon1 + (lon2 - lon1) * f
+    for i, (lat, lon) in enumerate(
+            route_points(lat1, lon1, lat2, lon2, speed, return_to_start)):
         t = (t0 + timedelta(seconds=i * TICK_SECONDS)).strftime(fmt)
         points.append(
             f'<trkpt lat="{lat}" lon="{lon}"><time>{t}</time></trkpt>'
@@ -206,7 +222,8 @@ def write_device_gpx(lat1, lon1, lat2, lon2, speed=WALK_SPEED):
     )
 
 
-def start_device_play(lat1, lon1, lat2, lon2, speed=WALK_SPEED):
+def start_device_play(lat1, lon1, lat2, lon2, speed=WALK_SPEED,
+                      return_to_start=False):
     """Replay the walk on a physical iPhone via pymobiledevice3 (iOS 17+).
 
     Needs the phone paired (USB at least once) and the tunnel daemon running:
@@ -215,7 +232,7 @@ def start_device_play(lat1, lon1, lat2, lon2, speed=WALK_SPEED):
     global DEVICE_PLAY_PROC
     if not HAS_PMD3:
         return "pymobiledevice3 not installed — device skipped"
-    write_device_gpx(lat1, lon1, lat2, lon2, speed)
+    write_device_gpx(lat1, lon1, lat2, lon2, speed, return_to_start)
     with DEVICE_LOCK:
         if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
             DEVICE_PLAY_PROC.terminate()
@@ -262,6 +279,8 @@ class WalkState:
         self.device = None
         self.end = None        # (lat, lon) so resume knows where to continue
         self.speed = None
+        self.exited = False
+        self.leg = None
 
     def set_device(self, note):
         with self.lock:
@@ -272,6 +291,8 @@ class WalkState:
             return {
                 "walking": self.walking,
                 "entered": self.entered,
+                "exited": self.exited,
+                "leg": self.leg,
                 "lat": self.lat,
                 "lon": self.lon,
                 "remaining_m": self.remaining_m,
@@ -287,47 +308,54 @@ STATE = WalkState()
 PAUSE = threading.Event()
 
 
-def walk(lat1, lon1, lat2, lon2, radius, speed, cancel):
+def walk(lat1, lon1, lat2, lon2, radius, speed, return_to_start, cancel):
+    """Move along the route, reporting entry into and exit from the zone.
+
+    The zone is the circle of `radius` around the destination, so distance is
+    always measured to (lat2, lon2) even on the way back.
+    """
+    points = route_points(lat1, lon1, lat2, lon2, speed, return_to_start)
     total = haversine_m(lat1, lon1, lat2, lon2)
-    steps = route_steps(total, speed)
     mode = "Run" if speed > WALK_SPEED else "Walk"
-    effective = total / (steps * TICK_SECONDS)
+    effective = total / max(route_steps(total, speed) * TICK_SECONDS, 1)
     pace = (f"{effective:.1f} m/s (compressed from {speed:.1f})"
             if effective > speed * 1.05 else f"{speed:.1f} m/s")
-    print(f"  {mode} started: {total:.0f}m in ~{steps * TICK_SECONDS:.0f}s "
-          f"at {pace}, zone radius {radius:.0f}m around destination")
+    print(f"  {mode} started: {total:.0f}m at {pace}, zone radius {radius:.0f}m"
+          + (" (out and back)" if return_to_start else ""))
 
-    for i in range(steps + 1):
+    turnaround = len(route_points(lat1, lon1, lat2, lon2, speed)) - 1
+    for i, (lat, lon) in enumerate(points):
         if cancel.is_set():
             print("  Walk cancelled (new route received).")
             return
-        # Hold position while paused: we simply stop advancing, so the
-        # last coordinate we applied stays in effect.
         while PAUSE.is_set():
             if cancel.is_set():
                 return
             time.sleep(0.2)
-        f = i / steps
-        lat = lat1 + (lat2 - lat1) * f
-        lon = lon1 + (lon2 - lon1) * f
+
         remaining = haversine_m(lat, lon, lat2, lon2)
         apply_position(lat, lon)
         with STATE.lock:
             STATE.lat, STATE.lon = lat, lon
             STATE.remaining_m = remaining
+            STATE.leg = "back" if i > turnaround else "out"
             if not STATE.entered and remaining <= radius:
                 STATE.entered = True
-                print(f"  >>> ENTERED GEOFENCE ZONE at {lat:.6f}, {lon:.6f} "
-                      f"({remaining:.0f}m from destination) <<<")
-        if i < steps:
+                print(f"  >>> ENTERED ZONE at {lat:.6f}, {lon:.6f} "
+                      f"({remaining:.0f}m from centre) <<<")
+            elif STATE.entered and not STATE.exited and remaining > radius:
+                STATE.exited = True
+                print(f"  <<< EXITED ZONE at {lat:.6f}, {lon:.6f} "
+                      f"({remaining:.0f}m from centre) >>>")
+        if i < len(points) - 1:
             time.sleep(TICK_SECONDS)
 
     with STATE.lock:
         STATE.walking = False
-    print(f"  {mode} finished at {lat2}, {lon2}.")
+    print(f"  {mode} finished.")
 
 
-def start_walk(lat1, lon1, lat2, lon2, radius, speed):
+def start_walk(lat1, lon1, lat2, lon2, radius, speed, return_to_start=False):
     STATE.cancel.set()
     if STATE.thread and STATE.thread.is_alive():
         STATE.thread.join(timeout=TICK_SECONDS + 5)
@@ -346,7 +374,8 @@ def start_walk(lat1, lon1, lat2, lon2, radius, speed):
         STATE.lat, STATE.lon = lat1, lon1
         STATE.entered = radius >= haversine_m(lat1, lon1, lat2, lon2)
     STATE.thread = threading.Thread(
-        target=walk, args=(lat1, lon1, lat2, lon2, radius, speed, STATE.cancel),
+        target=walk,
+        args=(lat1, lon1, lat2, lon2, radius, speed, return_to_start, STATE.cancel),
         daemon=True,
     )
     STATE.thread.start()
@@ -383,6 +412,57 @@ def stop_all():
         walking = STATE.walking
         STATE.reset()
     print("  Fake location stopped." + (" (walk cancelled)" if walking else ""))
+
+
+def reset_partner_app(bundle_id):
+    """Clear another app's monitored regions without touching its source.
+
+    iOS caps monitored regions at 20 per app and keeps them across launches.
+    An SDK that re-syncs its fence list without calling stopMonitoring leaves
+    the quota permanently full, so newly added geofences are refused. You
+    cannot release another app's regions from outside it, and locationd keeps
+    them in an encrypted store, so reinstalling the app is the only lever --
+    which is fine for a partner app, since it needs no source access.
+
+    The installed bundle is copied out and reinstalled, so the same binary
+    comes back. The app's data is lost; that is inherent to the reset.
+    """
+    env = dict(os.environ, DEVELOPER_DIR=DEVELOPER_DIR)
+    results = []
+    for udid in booted_udids():
+        code, path = run(["xcrun", "simctl", "get_app_container", udid,
+                          bundle_id, "app"], env=env)
+        if code != 0:
+            continue
+        path = path.strip()
+        staging = tempfile.mkdtemp(prefix="geofence-reset-")
+        try:
+            copy = os.path.join(staging, os.path.basename(path))
+            shutil.copytree(path, copy, symlinks=True)
+            run(["xcrun", "simctl", "terminate", udid, bundle_id], env=env)
+            code, out = run(["xcrun", "simctl", "uninstall", udid, bundle_id],
+                            env=env)
+            if code != 0:
+                results.append(f"{udid[:8]}: uninstall failed ({out})")
+                continue
+            code, out = run(["xcrun", "simctl", "install", udid, copy],
+                            env=env, timeout=120)
+            if code != 0:
+                results.append(f"{udid[:8]}: REINSTALL FAILED ({out}) -- "
+                               f"bundle kept at {copy}")
+                continue
+            run(["xcrun", "simctl", "privacy", udid, "grant",
+                 "location-always", bundle_id], env=env)
+            run(["xcrun", "simctl", "launch", udid, bundle_id], env=env)
+            results.append(f"{udid[:8]}: reinstalled and relaunched")
+            shutil.rmtree(staging, ignore_errors=True)
+        except OSError as exc:
+            results.append(f"{udid[:8]}: {exc}")
+    if not results:
+        return {"ok": False, "error": f"{bundle_id} is not installed on any "
+                                      f"booted simulator"}
+    print(f"  Reset {bundle_id}: " + "; ".join(results))
+    return {"ok": True, "detail": "; ".join(results)}
 
 
 def toggle_pause(paused):
@@ -483,6 +563,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.gate():
             return
+        if self.path == "/reset-app":
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+                bundle = json.loads(self.rfile.read(min(length, MAX_BODY_BYTES)))
+                bundle_id = str(bundle["bundle_id"]).strip()
+                if not bundle_id or "/" in bundle_id:
+                    raise ValueError("invalid bundle id")
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"ok": False, "error": f"bad request: {exc}"})
+                return
+            result = reset_partner_app(bundle_id)
+            self.send_json(200 if result["ok"] else 404, result)
+            return
         if self.path in ("/pause", "/resume"):
             self.send_json(200, {"ok": True, **toggle_pause(self.path == "/pause")})
             return
@@ -515,6 +608,7 @@ class Handler(BaseHTTPRequestHandler):
             lat2, lon2 = float(data["end_lat"]), float(data["end_lon"])
             radius = float(data["radius"])
             speed = float(data.get("speed", WALK_SPEED))
+            return_to_start = bool(data.get("return_to_start", False))
             # isfinite matters: float("nan") parses fine, and every comparison
             # against NaN is False, which would silently disable zone entry.
             for value in (lat1, lon1, lat2, lon2, radius, speed):
@@ -540,16 +634,18 @@ class Handler(BaseHTTPRequestHandler):
         print(f"  GPX updated: {lat1},{lon1} -> {lat2},{lon2} "
               f"({total:.0f}m, ~{duration:.0f}s {mode} at {effective:.1f} m/s, "
               f"zone {radius:.0f}m)")
-        start_walk(lat1, lon1, lat2, lon2, radius, speed)
+        start_walk(lat1, lon1, lat2, lon2, radius, speed, return_to_start)
         threading.Thread(
             target=lambda: STATE.set_device(
-                start_device_play(lat1, lon1, lat2, lon2, speed)),
+                start_device_play(lat1, lon1, lat2, lon2, speed,
+                                  return_to_start)),
             daemon=True,
         ).start()
         self.send_json(200, {
             "ok": True,
             "distance_m": round(total),
-            "duration_s": round(duration),
+            "duration_s": round(duration * (2 if return_to_start else 1)),
+            "return_to_start": return_to_start,
             "speed_mps": round(effective, 2),
             "applied": (f"{mode} {total / 1000:.0f}km, ~{duration:.0f}s "
                         f"at {effective:.0f} m/s (compressed)"
