@@ -40,12 +40,18 @@ struct InsiderZone: Decodable, Identifiable {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    /// Where a test run begins: far enough outside that crossing the boundary
-    /// is unambiguous, but close enough that the walk stays short.
+    /// Where a test run begins and ends.
+    ///
+    /// Entry fires as soon as the boundary is crossed, but iOS only confirms
+    /// an *exit* well beyond it: measured at 417 m leaving a 200 m fence,
+    /// roughly twice the radius. Starting — and returning to — 2.5x the radius
+    /// clears that hysteresis so the exit actually fires. The 300 m floor
+    /// covers small zones, where the buffer does not scale down.
+    var startDistance: Double { max(radius * 2.5, radius + 300) }
+
     var startCoordinate: CLLocationCoordinate2D {
-        let metresOutside = radius + 50
-        return CLLocationCoordinate2D(
-            latitude: latitude + metresOutside / 111_320.0,
+        CLLocationCoordinate2D(
+            latitude: latitude + startDistance / 111_320.0,
             longitude: longitude)
     }
 }
@@ -163,7 +169,7 @@ struct ContentView: View {
                             .foregroundColor(.primary)
                             .lineLimit(1)
                         Text(String(format: "r %.0f m · start %.0f m out · in and back",
-                                    zone.radius, zone.radius + 50))
+                                    zone.radius, zone.startDistance))
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -389,7 +395,7 @@ struct ContentView: View {
         exited = false
         metresFromCentre = nil
         activeSheet = nil
-        showStatus("\(zone.identifier) ready — \(Int(zone.radius + 50)) m out, in and back.",
+        showStatus("\(zone.identifier) ready — \(Int(zone.startDistance)) m out, in and back.",
                    isError: false)
     }
 
