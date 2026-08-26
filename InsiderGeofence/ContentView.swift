@@ -518,8 +518,18 @@ struct ContentView: View {
     private func send(path: String, body: [String: Any]?,
                       onSuccess: @escaping ([String: Any]) -> Void) {
         let host = helperHost.trimmingCharacters(in: .whitespaces)
+        // An empty host still forms a URL ("http://:8766/…"), which fails later
+        // as a connection error and reads as "the helper is down" when really
+        // nothing was ever configured. Catch it here and open Settings.
+        guard !host.isEmpty else {
+            showStatus("No Mac helper address set — enter your Mac's IP in Settings.",
+                       isError: true)
+            activeSheet = .settings
+            return
+        }
         guard let url = URL(string: "http://\(host):8766/\(path)") else {
-            showStatus("Set the Mac helper address in settings.", isError: true)
+            showStatus("\(host) is not a valid address.", isError: true)
+            activeSheet = .settings
             return
         }
         var request = URLRequest(url: url)
