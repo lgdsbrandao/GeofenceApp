@@ -9,8 +9,16 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
-final class OriginalLocationTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
+/// Tracks two different things, and the difference matters.
+///
+/// `original` is the first fix after launch — the real position to return to,
+/// captured before any spoofing, and never overwritten. `current` is wherever
+/// the device is *now*, including a spoofed position, which is what the zone
+/// search needs: looking for nearby geofences from a launch-time coordinate
+/// returns the wrong ones once the device has been moved.
+final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var original: CLLocationCoordinate2D?
+    @Published var current: CLLocationCoordinate2D?
     private let manager = CLLocationManager()
 
     override init() {
@@ -18,13 +26,13 @@ final class OriginalLocationTracker: NSObject, ObservableObject, CLLocationManag
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
         manager.requestWhenInUseAuthorization()
-        manager.startUpdatingLocation()
+        manager.startUpdatingLocation()   // stays on, so `current` keeps up
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard original == nil, let first = locations.first else { return }
-        original = first.coordinate
-        manager.stopUpdatingLocation()
+        guard let latest = locations.last else { return }
+        current = latest.coordinate
+        if original == nil { original = latest.coordinate }
     }
 }
 
@@ -73,7 +81,7 @@ private let walkSpeedMps = 1.4
 private let runSpeedMps = 10.0
 
 struct ContentView: View {
-    @StateObject private var originalTracker = OriginalLocationTracker()
+    @StateObject private var tracker = LocationTracker()
 
     #if targetEnvironment(simulator)
     @AppStorage("helperHost") private var helperHost: String = "localhost"
@@ -325,7 +333,7 @@ struct ContentView: View {
             Button(action: goToOriginalLocation) {
                 HStack {
                     Image(systemName: "location.circle")
-                    Text(originalTracker.original == nil
+                    Text(tracker.original == nil
                          ? "Go to original location (waiting for GPS…)"
                          : "Go to original location")
                         .fontWeight(.semibold)
@@ -336,7 +344,7 @@ struct ContentView: View {
             .background(Color.green.opacity(0.15))
             .foregroundColor(.green)
             .cornerRadius(14)
-            .disabled(isSending || originalTracker.original == nil)
+            .disabled(isSending || tracker.original == nil)
         }
     }
 
@@ -403,9 +411,14 @@ struct ContentView: View {
 
     /// Zones are searched around wherever the device currently is.
     private func fetchZones() {
-        let here = originalTracker.original
-            ?? selectedZone?.coordinate
-            ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        // Search from where the device is now. Falling back to 0,0 silently
+        // returns zones near the Gulf of Guinea, which looks like the API
+        // ignoring proximity rather than a missing fix.
+        guard let here = tracker.current ?? tracker.original ?? selectedZone?.coordinate else {
+            showStatus("Waiting for a location fix — the zone list is ordered by distance from you.",
+                       isError: true)
+            return
+        }
         guard let url = URL(string: insiderZonesURL) else { return }
 
         var request = URLRequest(url: url)
@@ -467,7 +480,7 @@ struct ContentView: View {
     }
 
     private func goToOriginalLocation() {
-        guard let original = originalTracker.original else { return }
+        guard let original = tracker.original else { return }
         isRunning = false
         send(path: "update", body: [
             "start_lat": original.latitude, "start_lon": original.longitude,
