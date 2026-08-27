@@ -411,14 +411,15 @@ struct ContentView: View {
 
     /// Zones are searched around wherever the device currently is.
     private func fetchZones() {
-        // Search from where the device is now. Falling back to 0,0 silently
-        // returns zones near the Gulf of Guinea, which looks like the API
-        // ignoring proximity rather than a missing fix.
-        guard let here = tracker.current ?? tracker.original ?? selectedZone?.coordinate else {
-            showStatus("Waiting for a location fix — the zone list is ordered by distance from you.",
-                       isError: true)
-            return
-        }
+        // The API returns every zone whatever we send; user_location only sets
+        // the order. A missing fix is therefore not a reason to refuse the
+        // list — it only means the order is not meaningful, so say that
+        // instead of blocking. A device with no location set at all (a
+        // simulator that has never been given one, or had it cleared) never
+        // calls didUpdateLocations, so this is a normal state to land in.
+        let here = tracker.current ?? tracker.original ?? selectedZone?.coordinate
+        let sortedByDistance = here != nil
+        let search = here ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
         guard let url = URL(string: insiderZonesURL) else { return }
 
         var request = URLRequest(url: url)
@@ -427,8 +428,8 @@ struct ContentView: View {
         request.timeoutInterval = 20
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
             "partner_name": insiderPartner,
-            "user_location": ["latitude": String(here.latitude),
-                              "longitude": String(here.longitude)],
+            "user_location": ["latitude": String(search.latitude),
+                              "longitude": String(search.longitude)],
         ])
 
         isLoadingZones = true
@@ -450,6 +451,11 @@ struct ContentView: View {
                 if zones.isEmpty {
                     showStatus("No geofences configured for \(insiderPartner).", isError: false)
                 } else {
+                    if !sortedByDistance {
+                        showStatus("No location fix yet, so the list is not sorted by distance. "
+                                   + "Give the device a location to sort by proximity.",
+                                   isError: false)
+                    }
                     activeSheet = .zones
                 }
             }
