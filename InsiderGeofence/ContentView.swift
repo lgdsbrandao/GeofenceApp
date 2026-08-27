@@ -9,8 +9,16 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
-final class OriginalLocationTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
+/// Tracks two different things, and the difference matters.
+///
+/// `original` is the first fix after launch — the real position to return to,
+/// captured before any spoofing, and never overwritten. `current` is wherever
+/// the device is *now*, including a spoofed position, which is what the zone
+/// search needs: looking for nearby geofences from a launch-time coordinate
+/// returns the wrong ones once the device has been moved.
+final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var original: CLLocationCoordinate2D?
+    @Published var current: CLLocationCoordinate2D?
     private let manager = CLLocationManager()
 
     override init() {
@@ -18,13 +26,13 @@ final class OriginalLocationTracker: NSObject, ObservableObject, CLLocationManag
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
         manager.requestWhenInUseAuthorization()
-        manager.startUpdatingLocation()
+        manager.startUpdatingLocation()   // stays on, so `current` keeps up
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard original == nil, let first = locations.first else { return }
-        original = first.coordinate
-        manager.stopUpdatingLocation()
+        guard let latest = locations.last else { return }
+        current = latest.coordinate
+        if original == nil { original = latest.coordinate }
     }
 }
 
@@ -73,7 +81,7 @@ private let walkSpeedMps = 1.4
 private let runSpeedMps = 10.0
 
 struct ContentView: View {
-    @StateObject private var originalTracker = OriginalLocationTracker()
+    @StateObject private var tracker = LocationTracker()
 
     #if targetEnvironment(simulator)
     @AppStorage("helperHost") private var helperHost: String = "localhost"
@@ -325,7 +333,7 @@ struct ContentView: View {
             Button(action: goToOriginalLocation) {
                 HStack {
                     Image(systemName: "location.circle")
-                    Text(originalTracker.original == nil
+                    Text(tracker.original == nil
                          ? "Go to original location (waiting for GPS…)"
                          : "Go to original location")
                         .fontWeight(.semibold)
@@ -336,7 +344,7 @@ struct ContentView: View {
             .background(Color.green.opacity(0.15))
             .foregroundColor(.green)
             .cornerRadius(14)
-            .disabled(isSending || originalTracker.original == nil)
+            .disabled(isSending || tracker.original == nil)
         }
     }
 
@@ -403,9 +411,15 @@ struct ContentView: View {
 
     /// Zones are searched around wherever the device currently is.
     private func fetchZones() {
-        let here = originalTracker.original
-            ?? selectedZone?.coordinate
-            ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        // The API returns every zone whatever we send; user_location only sets
+        // the order. A missing fix is therefore not a reason to refuse the
+        // list — it only means the order is not meaningful, so say that
+        // instead of blocking. A device with no location set at all (a
+        // simulator that has never been given one, or had it cleared) never
+        // calls didUpdateLocations, so this is a normal state to land in.
+        let here = tracker.current ?? tracker.original ?? selectedZone?.coordinate
+        let sortedByDistance = here != nil
+        let search = here ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
         guard let url = URL(string: insiderZonesURL) else { return }
 
         var request = URLRequest(url: url)
@@ -414,8 +428,8 @@ struct ContentView: View {
         request.timeoutInterval = 20
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
             "partner_name": insiderPartner,
-            "user_location": ["latitude": String(here.latitude),
-                              "longitude": String(here.longitude)],
+            "user_location": ["latitude": String(search.latitude),
+                              "longitude": String(search.longitude)],
         ])
 
         isLoadingZones = true
@@ -437,6 +451,11 @@ struct ContentView: View {
                 if zones.isEmpty {
                     showStatus("No geofences configured for \(insiderPartner).", isError: false)
                 } else {
+                    if !sortedByDistance {
+                        showStatus("No location fix yet, so the list is not sorted by distance. "
+                                   + "Give the device a location to sort by proximity.",
+                                   isError: false)
+                    }
                     activeSheet = .zones
                 }
             }
@@ -467,7 +486,7 @@ struct ContentView: View {
     }
 
     private func goToOriginalLocation() {
-        guard let original = originalTracker.original else { return }
+        guard let original = tracker.original else { return }
         isRunning = false
         send(path: "update", body: [
             "start_lat": original.latitude, "start_lon": original.longitude,
@@ -518,8 +537,18 @@ struct ContentView: View {
     private func send(path: String, body: [String: Any]?,
                       onSuccess: @escaping ([String: Any]) -> Void) {
         let host = helperHost.trimmingCharacters(in: .whitespaces)
+        // An empty host still forms a URL ("http://:8766/…"), which fails later
+        // as a connection error and reads as "the helper is down" when really
+        // nothing was ever configured. Catch it here and open Settings.
+        guard !host.isEmpty else {
+            showStatus("No Mac helper address set — enter your Mac's IP in Settings.",
+                       isError: true)
+            activeSheet = .settings
+            return
+        }
         guard let url = URL(string: "http://\(host):8766/\(path)") else {
-            showStatus("Set the Mac helper address in settings.", isError: true)
+            showStatus("\(host) is not a valid address.", isError: true)
+            activeSheet = .settings
             return
         }
         var request = URLRequest(url: url)
