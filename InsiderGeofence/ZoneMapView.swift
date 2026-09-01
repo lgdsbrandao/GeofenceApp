@@ -72,14 +72,14 @@ struct ZoneMapView: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let circle = overlay as? MKCircle {
                 let renderer = MKCircleRenderer(circle: circle)
-                renderer.fillColor = UIColor.systemBlue.withAlphaComponent(0.18)
-                renderer.strokeColor = UIColor.systemBlue
+                renderer.fillColor = UIColor.insiderPrimary.withAlphaComponent(0.16)
+                renderer.strokeColor = UIColor.insiderPrimary
                 renderer.lineWidth = 2
                 return renderer
             }
             if let line = overlay as? MKPolyline {
                 let renderer = MKPolylineRenderer(polyline: line)
-                renderer.strokeColor = UIColor.systemOrange
+                renderer.strokeColor = UIColor.insiderHitPink
                 renderer.lineWidth = 3
                 renderer.lineDashPattern = [4, 6]
                 return renderer
@@ -91,7 +91,7 @@ struct ZoneMapView: UIViewRepresentable {
             guard !(annotation is MKUserLocation) else { return nil }
             let view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: "zone")
             let isStart = annotation.title == "Start"
-            view.markerTintColor = isStart ? .systemGreen : .systemRed
+            view.markerTintColor = isStart ? .insiderHitPink : .insiderPrimary
             view.glyphImage = UIImage(systemName: isStart ? "figure.walk" : "mappin")
             view.displayPriority = .required
             return view
