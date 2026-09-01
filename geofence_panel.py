@@ -218,6 +218,46 @@ def resolve_device_python():
 
 DEVICE_PYTHON, HAS_PMD3 = resolve_device_python()
 
+UDID_CACHE = {"udid": None, "ts": 0.0}
+
+
+def device_selector():
+    """Arguments naming which iPhone to drive, or None if we cannot tell.
+
+    `--tunnel ""` means "whichever device tunneld knows about", which is fine
+    with one phone and fatal with two: pymobiledevice3 refuses to guess and
+    asks for an interactive choice it cannot get from a subprocess, so the
+    command fails with nothing useful in the log. Name the device explicitly.
+
+    The USB-connected one wins, since that is the phone on the desk; other
+    devices reachable over Wi-Fi are ignored. GEOFENCE_UDID overrides.
+    """
+    now = time.time()
+    if UDID_CACHE["udid"] and now - UDID_CACHE["ts"] < 30:
+        return ["--udid", UDID_CACHE["udid"]]
+
+    udid = os.environ.get("GEOFENCE_UDID", "").strip()
+    if not udid:
+        code, out = run([DEVICE_PYTHON, "-m", "pymobiledevice3", "usbmux", "list"],
+                        timeout=25)
+        if code == 0:
+            try:
+                devices = json.loads(out)
+            except json.JSONDecodeError:
+                devices = []
+            usb = [d.get("UniqueDeviceID") for d in devices
+                   if d.get("ConnectionType") == "USB" and d.get("UniqueDeviceID")]
+            if len(usb) == 1:
+                udid = usb[0]
+            elif len(usb) > 1:
+                print(f"  device: {len(usb)} iPhones on USB — set GEOFENCE_UDID "
+                      f"to pick one ({', '.join(u[:12] for u in usb)})")
+
+    if not udid:
+        return None
+    UDID_CACHE.update(udid=udid, ts=now)
+    return ["--udid", udid]
+
 
 BOOTED_CACHE = {"udids": [], "ts": 0.0}
 
@@ -287,6 +327,9 @@ def start_device_play(lat1, lon1, lat2, lon2, speed=WALK_SPEED,
     global DEVICE_PLAY_PROC
     if not HAS_PMD3:
         return "pymobiledevice3 not installed — device skipped"
+    selector = device_selector()
+    if selector is None:
+        return "no iPhone on USB — plug one in, or set GEOFENCE_UDID"
     write_device_gpx(lat1, lon1, lat2, lon2, speed, return_to_start)
     with DEVICE_LOCK:
         if DEVICE_PLAY_PROC and DEVICE_PLAY_PROC.poll() is None:
@@ -295,13 +338,11 @@ def start_device_play(lat1, lon1, lat2, lon2, speed=WALK_SPEED,
         # at its previous position; set the start coordinate first so it
         # jumps there immediately and `play` walks on from there.
         run([DEVICE_PYTHON, "-m", "pymobiledevice3", "developer", "dvt",
-             "simulate-location", "set", "--tunnel", "", "--",
-             str(lat1), str(lon1)], timeout=25)
+             "simulate-location", "set"] + selector + ["--", str(lat1), str(lon1)], timeout=25)
         with DEVICE_PLAY_LOG.open("w") as log:
             DEVICE_PLAY_PROC = subprocess.Popen(
                 [DEVICE_PYTHON, "-m", "pymobiledevice3", "developer", "dvt",
-                 "simulate-location", "play", str(DEVICE_GPX_PATH),
-                 "--tunnel", ""],
+                 "simulate-location", "play", str(DEVICE_GPX_PATH)] + selector,
                 stdout=log, stderr=log,
             )
         proc = DEVICE_PLAY_PROC
@@ -455,7 +496,7 @@ def stop_all():
         def clear_device():
             code, _ = run(
                 [DEVICE_PYTHON, "-m", "pymobiledevice3", "developer", "dvt",
-                 "simulate-location", "clear", "--tunnel", ""],
+                 "simulate-location", "clear"] + (device_selector() or []),
                 timeout=30,
             )
             note = ("fake location cleared" if code == 0
