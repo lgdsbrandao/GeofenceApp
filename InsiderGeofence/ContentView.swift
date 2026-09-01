@@ -134,6 +134,7 @@ struct ContentView: View {
     @State private var isLoadingZones = false
     /// The panel the zones on screen actually came from.
     @State private var loadedPartner = ""
+    @State private var copiedCoordinates = false
     @State private var activeSheet: PanelSheet?
 
     @State private var statusMessage = ""
@@ -505,6 +506,7 @@ struct ContentView: View {
             ScrollView {
                 LazyVStack(spacing: 8) {
                     panelField
+                    myLocationCard
 
                     if isLoadingZones {
                         ProgressView()
@@ -588,6 +590,65 @@ struct ContentView: View {
             )
         }
         .padding(.bottom, 4)
+    }
+
+    /// The device-only route: rather than moving the phone to a zone, put a
+    /// zone where the phone already is. iOS has no way for an app to spoof
+    /// location for other apps, so on real hardware this is the only test that
+    /// needs no Mac attached — create a zone at these coordinates in the
+    /// panel, then walk across its edge for real.
+    @ViewBuilder
+    private var myLocationCard: some View {
+        if let here = tracker.current ?? tracker.original {
+            let text = String(format: "%.6f, %.6f", here.latitude, here.longitude)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("YOUR LOCATION")
+                    .font(.caption2.bold())
+                    .tracking(1.1)
+                    .foregroundColor(.insiderPrimary)
+                    .padding(.leading, 4)
+
+                HStack(spacing: 10) {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.insiderPrimary)
+                        .frame(width: 20)
+                    Text(text)
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                    Spacer(minLength: 8)
+                    Button(action: {
+                        UIPasteboard.general.string = text
+                        withAnimation { copiedCoordinates = true }
+                    }) {
+                        Text(copiedCoordinates ? "Copied" : "Copy")
+                            .font(.caption.bold())
+                            .foregroundColor(copiedCoordinates ? .insiderHitPink : .white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(copiedCoordinates
+                                        ? AnyView(Color.insiderFaluRed)
+                                        : AnyView(insiderGradient))
+                            .clipShape(Capsule())
+                    }
+                }
+                .padding(12)
+                .background(Color.insiderCard)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.insiderPrimary.opacity(0.14), lineWidth: 0.5)
+                )
+
+                Text("Create a zone here in the panel and walk across its edge — "
+                     + "the only test that needs no Mac attached.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+            }
+            .padding(.bottom, 6)
+        }
     }
 
     private func zoneListRow(_ zone: InsiderZone) -> some View {

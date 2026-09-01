@@ -71,7 +71,7 @@
          </BuildableReference>
       </BuildableProductRunnable>
       <LocationScenarioReference
-         identifier = "../../../../../Downloads/update_fake_route_here.gpx"
+         identifier = "../../../update_fake_route_here.gpx"
          referenceType = "0">
       </LocationScenarioReference>
    </LaunchAction>
