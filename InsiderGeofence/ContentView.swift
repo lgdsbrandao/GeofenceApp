@@ -68,7 +68,7 @@ private struct ZoneListResponse: Decodable {
     let geofences: [InsiderZone]
 }
 
-private let insiderPartner = "oxttest"
+private let defaultPartner = "oxttest"
 private let insiderZonesURL = "https://mobile.useinsider.com/api/v1/geofences"
 /// Which modal is up. A single sheet driver avoids the iOS 14 behaviour
 /// where only the last `.sheet(isPresented:)` on a view actually presents.
@@ -126,10 +126,15 @@ struct ContentView: View {
     #endif
     @AppStorage("helperToken") private var helperToken: String = ""
     @AppStorage("partnerBundleID") private var partnerBundleID: String = "com.useinsider.mobile-ios"
+    /// Which Insider panel the zones are pulled from. Typed in the picker.
+    @AppStorage("insiderPartner") private var partnerName: String = defaultPartner
 
     @State private var zones: [InsiderZone] = []
     @State private var selectedZone: InsiderZone?
     @State private var isLoadingZones = false
+    /// The panel the zones on screen actually came from.
+    @State private var loadedPartner = ""
+    @State private var copiedCoordinates = false
     @State private var activeSheet: PanelSheet?
 
     @State private var statusMessage = ""
@@ -248,7 +253,7 @@ struct ContentView: View {
     }
 
     private var zoneRow: some View {
-        Button(action: fetchZones) {
+        Button(action: { activeSheet = .zones }) {
             HStack(spacing: 12) {
                 ZStack {
                     Circle()
@@ -270,7 +275,7 @@ struct ContentView: View {
                     Text(selectedZone.map {
                             String(format: "r %.0f m · start %.0f m out · in and back",
                                    $0.radius, $0.startDistance)
-                         } ?? "Loads the zones configured for \(insiderPartner)")
+                         } ?? "Zones from \(partnerName.isEmpty ? defaultPartner : partnerName)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -500,23 +505,149 @@ struct ContentView: View {
         NavigationView {
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    Text("Nearest first, from where the device is now")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                        .padding(.bottom, 2)
+                    panelField
+                    myLocationCard
 
-                    ForEach(zones) { zone in
-                        zoneListRow(zone)
+                    if isLoadingZones {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 28)
+                    } else if zones.isEmpty {
+                        Text("No zones came back for that panel. Check the name and load again.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 28)
+                    } else {
+                        Text("\(zones.count) zones · nearest first, from where the device is now")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
+                            .padding(.bottom, 2)
+
+                        ForEach(zones) { zone in
+                            zoneListRow(zone)
+                        }
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
             }
+            .onAppear {
+                // Load on open, and reload if the panel was changed since.
+                if zones.isEmpty || loadedPartner != partnerName.trimmingCharacters(in: .whitespaces) {
+                    fetchZones()
+                }
+            }
             .background(Color.insiderGround.ignoresSafeArea())
-            .navigationBarTitle(Text("\(zones.count) geofences"), displayMode: .inline)
+            .navigationBarTitle(Text("Geofences"), displayMode: .inline)
             .navigationBarItems(trailing: Button("Done") { activeSheet = nil })
+        }
+    }
+
+    /// The Insider panel the zones come from. Editable here so a different
+    /// partner can be inspected without rebuilding.
+    private var panelField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("PANEL")
+                .font(.caption2.bold())
+                .tracking(1.1)
+                .foregroundColor(.insiderPrimary)
+                .padding(.leading, 4)
+
+            HStack(spacing: 10) {
+                Image(systemName: "building.2")
+                    .font(.system(size: 14))
+                    .foregroundColor(.insiderPrimary)
+                    .frame(width: 20)
+
+                TextField(defaultPartner, text: $partnerName, onCommit: fetchZones)
+                    .font(.subheadline)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .foregroundColor(.primary)
+
+                Button(action: fetchZones) {
+                    Text("Load")
+                        .font(.caption.bold())
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(insiderGradient)
+                        .clipShape(Capsule())
+                }
+                .disabled(isLoadingZones
+                          || partnerName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(12)
+            .background(Color.insiderCard)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.insiderPrimary.opacity(0.14), lineWidth: 0.5)
+            )
+        }
+        .padding(.bottom, 4)
+    }
+
+    /// The device-only route: rather than moving the phone to a zone, put a
+    /// zone where the phone already is. iOS has no way for an app to spoof
+    /// location for other apps, so on real hardware this is the only test that
+    /// needs no Mac attached — create a zone at these coordinates in the
+    /// panel, then walk across its edge for real.
+    @ViewBuilder
+    private var myLocationCard: some View {
+        if let here = tracker.current ?? tracker.original {
+            let text = String(format: "%.6f, %.6f", here.latitude, here.longitude)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("YOUR LOCATION")
+                    .font(.caption2.bold())
+                    .tracking(1.1)
+                    .foregroundColor(.insiderPrimary)
+                    .padding(.leading, 4)
+
+                HStack(spacing: 10) {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.insiderPrimary)
+                        .frame(width: 20)
+                    Text(text)
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                    Spacer(minLength: 8)
+                    Button(action: {
+                        UIPasteboard.general.string = text
+                        withAnimation { copiedCoordinates = true }
+                    }) {
+                        Text(copiedCoordinates ? "Copied" : "Copy")
+                            .font(.caption.bold())
+                            .foregroundColor(copiedCoordinates ? .insiderHitPink : .white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(copiedCoordinates
+                                        ? AnyView(Color.insiderFaluRed)
+                                        : AnyView(insiderGradient))
+                            .clipShape(Capsule())
+                    }
+                }
+                .padding(12)
+                .background(Color.insiderCard)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.insiderPrimary.opacity(0.14), lineWidth: 0.5)
+                )
+
+                Text("Create a zone here in the panel and walk across its edge — "
+                     + "the only test that needs no Mac attached.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+            }
+            .padding(.bottom, 6)
         }
     }
 
@@ -604,6 +735,11 @@ struct ContentView: View {
         let here = tracker.current ?? tracker.original ?? selectedZone?.coordinate
         let sortedByDistance = here != nil
         let search = here ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        let partner = partnerName.trimmingCharacters(in: .whitespaces)
+        guard !partner.isEmpty else {
+            showStatus("Enter a panel name to load its geofences.", isError: true)
+            return
+        }
         guard let url = URL(string: insiderZonesURL) else { return }
 
         var request = URLRequest(url: url)
@@ -611,7 +747,7 @@ struct ContentView: View {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 20
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "partner_name": insiderPartner,
+            "partner_name": partner,
             "user_location": ["latitude": String(search.latitude),
                               "longitude": String(search.longitude)],
         ])
@@ -632,15 +768,13 @@ struct ContentView: View {
                     return
                 }
                 zones = decoded.geofences
+                loadedPartner = partner
                 if zones.isEmpty {
-                    showStatus("No geofences configured for \(insiderPartner).", isError: false)
-                } else {
-                    if !sortedByDistance {
-                        showStatus("No location fix yet, so the list is not sorted by distance. "
-                                   + "Give the device a location to sort by proximity.",
-                                   isError: false)
-                    }
-                    activeSheet = .zones
+                    showStatus("No geofences configured for \(partner).", isError: false)
+                } else if !sortedByDistance {
+                    showStatus("No location fix yet, so the list is not sorted by distance. "
+                               + "Give the device a location to sort by proximity.",
+                               isError: false)
                 }
             }
         }.resume()
@@ -737,7 +871,11 @@ struct ContentView: View {
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
+        // Trimmed: pasting a token easily carries a trailing space or
+        // newline, and the helper compares it exactly — that lands as a
+        // 401 that looks like a wrong token rather than a stray character.
+        request.setValue(helperToken.trimmingCharacters(in: .whitespacesAndNewlines),
+                         forHTTPHeaderField: "X-Geofence-Token")
         request.timeoutInterval = 15
         if let body = body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -779,7 +917,11 @@ struct ContentView: View {
         let host = helperHost.trimmingCharacters(in: .whitespaces)
         guard isRunning, let url = URL(string: "http://\(host):8766/status") else { return }
         var request = URLRequest(url: url)
-        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
+        // Trimmed: pasting a token easily carries a trailing space or
+        // newline, and the helper compares it exactly — that lands as a
+        // 401 that looks like a wrong token rather than a stray character.
+        request.setValue(helperToken.trimmingCharacters(in: .whitespacesAndNewlines),
+                         forHTTPHeaderField: "X-Geofence-Token")
         request.timeoutInterval = 15
 
         URLSession.shared.dataTask(with: request) { data, _, _ in

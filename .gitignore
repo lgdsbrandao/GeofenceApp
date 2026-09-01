@@ -19,3 +19,6 @@ LocationMovement.xcodeproj/
 
 # Shared secret for the helper (generated at first run)
 .geofence_token
+
+# Local virtualenv holding a Python 3.13 pymobiledevice3 for the device path
+.venv/
