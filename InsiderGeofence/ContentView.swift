@@ -417,29 +417,91 @@ struct ContentView: View {
 
     // MARK: - Zone list
 
+    /// Cards on the brand ground rather than a stock List, so the sheet reads
+    /// as the same surface as the panels over the map.
     private var zoneList: some View {
         NavigationView {
-            List(zones) { zone in
-                Button(action: { select(zone) }) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(zone.identifier)
-                                .font(.subheadline.bold())
-                                .foregroundColor(.primary)
-                            Text(String(format: "%.5f, %.5f  ·  r %.0f m",
-                                        zone.latitude, zone.longitude, zone.radius))
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: selectedZone?.id == zone.id
-                              ? "checkmark.circle.fill" : "arrow.right.circle")
-                            .foregroundColor(.blue)
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    Text("Nearest first, from where the device is now")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                        .padding(.bottom, 2)
+
+                    ForEach(zones) { zone in
+                        zoneListRow(zone)
                     }
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
             }
+            .background(Color.insiderBackground.ignoresSafeArea())
             .navigationBarTitle(Text("\(zones.count) geofences"), displayMode: .inline)
+            .navigationBarItems(trailing: Button("Done") { activeSheet = nil })
         }
+    }
+
+    private func zoneListRow(_ zone: InsiderZone) -> some View {
+        let isSelected = selectedZone?.id == zone.id
+        return Button(action: { select(zone) }) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Color.insiderPrimary.opacity(isSelected ? 0.28 : 0.14))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: isSelected ? "scope" : "mappin.and.ellipse")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.insiderPrimary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(zone.identifier)
+                        .font(.subheadline.bold())
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Text(String(format: "%.5f, %.5f · r %.0f m",
+                                zone.latitude, zone.longitude, zone.radius))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 6)
+
+                VStack(alignment: .trailing, spacing: 3) {
+                    if let away = distanceAway(from: zone) {
+                        Text(away)
+                            .font(.caption2.bold())
+                            .foregroundColor(.insiderHitPink)
+                    }
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(isSelected ? .insiderPrimary : .secondary)
+                }
+            }
+            .padding(12)
+            .background(Color.white.opacity(isSelected ? 0.10 : 0.05))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.insiderPrimary.opacity(isSelected ? 0.55 : 0.12),
+                                  lineWidth: isSelected ? 1.2 : 0.5)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    /// How far the zone is from the device — the same measure the API sorted
+    /// by, so the ordering stops looking arbitrary.
+    private func distanceAway(from zone: InsiderZone) -> String? {
+        guard let here = tracker.current ?? tracker.original else { return nil }
+        let metres = CLLocation(latitude: here.latitude, longitude: here.longitude)
+            .distance(from: CLLocation(latitude: zone.latitude, longitude: zone.longitude))
+        if metres < 1000 { return String(format: "%.0f m", metres) }
+        if metres < 100_000 { return String(format: "%.1f km", metres / 1000) }
+        return String(format: "%.0f km", metres / 1000)
     }
 
     private func select(_ zone: InsiderZone) {
