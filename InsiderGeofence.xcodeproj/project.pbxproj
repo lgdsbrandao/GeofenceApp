@@ -12,6 +12,7 @@
 		882D39C92F8599C90041FA89 /* update_fake_route_here.gpx in Resources */ = {isa = PBXBuildFile; fileRef = 882D39C62F8599C90041FA89 /* update_fake_route_here.gpx */; };
 		CB4C2CFA274F688900D51033 /* InsiderGeofenceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB4C2CF9274F688900D51033 /* InsiderGeofenceApp.swift */; };
 		CB4C2CFC274F688900D51033 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB4C2CFB274F688900D51033 /* ContentView.swift */; };
+		3C8D2E4F5A6B70819243B5C7 /* InsiderTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C8D2E4F5A6B70819243B5C6 /* InsiderTheme.swift */; };
 		2B7C1D3E4F5A60718293A4B6 /* ZoneMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B7C1D3E4F5A60718293A4B5 /* ZoneMapView.swift */; };
 		CB4C2CFE274F688A00D51033 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CB4C2CFD274F688A00D51033 /* Assets.xcassets */; };
 		CB4C2D01274F688A00D51033 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CB4C2D00274F688A00D51033 /* Preview Assets.xcassets */; };
@@ -43,6 +44,7 @@
 		CB4C2CF6274F688900D51033 /* InsiderGeofence.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = InsiderGeofence.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CB4C2CF9274F688900D51033 /* InsiderGeofenceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsiderGeofenceApp.swift; sourceTree = "<group>"; };
 		CB4C2CFB274F688900D51033 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		3C8D2E4F5A6B70819243B5C6 /* InsiderTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsiderTheme.swift; sourceTree = "<group>"; };
 		2B7C1D3E4F5A60718293A4B5 /* ZoneMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneMapView.swift; sourceTree = "<group>"; };
 		CB4C2CFD274F688A00D51033 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CB4C2D00274F688A00D51033 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
@@ -107,6 +109,7 @@
 				CB789C4E274F8608008D9DA7 /* Info.plist */,
 				CB4C2CF9274F688900D51033 /* InsiderGeofenceApp.swift */,
 				CB4C2CFB274F688900D51033 /* ContentView.swift */,
+				3C8D2E4F5A6B70819243B5C6 /* InsiderTheme.swift */,
 				2B7C1D3E4F5A60718293A4B5 /* ZoneMapView.swift */,
 				CB4C2CFD274F688A00D51033 /* Assets.xcassets */,
 				CB4C2CFF274F688A00D51033 /* Preview Content */,
@@ -273,6 +276,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CB4C2CFC274F688900D51033 /* ContentView.swift in Sources */,
+				3C8D2E4F5A6B70819243B5C7 /* InsiderTheme.swift in Sources */,
 				2B7C1D3E4F5A60718293A4B6 /* ZoneMapView.swift in Sources */,
 				CB4C2CFA274F688900D51033 /* InsiderGeofenceApp.swift in Sources */,
 			);

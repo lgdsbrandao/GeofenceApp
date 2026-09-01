@@ -80,6 +80,42 @@ private enum PanelSheet: Int, Identifiable {
 private let walkSpeedMps = 1.4
 private let runSpeedMps = 10.0
 
+/// Translucent chrome for the panels floating over the map.
+///
+/// SwiftUI's `.ultraThinMaterial` is iOS 15+, and this app still targets 14,
+/// so the blur comes from UIKit.
+struct BlurView: UIViewRepresentable {
+    var style: UIBlurEffect.Style = .systemThickMaterialDark
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        UIVisualEffectView(effect: UIBlurEffect(style: style))
+    }
+
+    func updateUIView(_ view: UIVisualEffectView, context: Context) {
+        view.effect = UIBlurEffect(style: style)
+    }
+}
+
+extension View {
+    /// A panel sitting on top of the map: blurred, rounded, with a hairline
+    /// and a soft shadow so it separates from whatever is underneath.
+    func floating(cornerRadius: CGFloat) -> some View {
+        self
+            .background(
+                ZStack {
+                    BlurView(style: .systemThickMaterialDark)
+                    Color.insiderBackground.opacity(0.55)
+                }
+            )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.insiderPrimary.opacity(0.22), lineWidth: 0.5)
+            )
+            .shadow(color: Color.black.opacity(0.45), radius: 14, y: 5)
+    }
+}
+
 struct ContentView: View {
     @StateObject private var tracker = LocationTracker()
 
@@ -110,19 +146,25 @@ struct ContentView: View {
     @State private var authFailed = false
 
     var body: some View {
-        VStack(spacing: 10) {
-            header
+        ZStack {
             ZoneMapView(zone: selectedZone,
                         startCoordinate: selectedZone?.startCoordinate)
-                .frame(minHeight: 120, maxHeight: .infinity)
-                .cornerRadius(16)
-            zoneCard
-            progressCard
-            actionButtons
+                .ignoresSafeArea()
+
+            VStack(spacing: 10) {
+                topBar
+                Spacer(minLength: 0)
+                HStack {
+                    Spacer()
+                    locateButton
+                }
+                controlPanel
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 6)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .accentColor(.insiderPrimary)
+        .preferredColorScheme(.dark)   // the brand is a dark ground
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .zones: zoneList
@@ -131,108 +173,116 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Floating chrome
 
-    private var header: some View {
-        HStack {
+    private var topBar: some View {
+        HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Geofence Panel")
-                    .font(.headline)
+                    .font(.subheadline.bold())
                 Text(selectedZone == nil
                      ? "Pick a zone to test"
-                     : "Walk in and back out to fire enter + exit")
+                     : "In and back out to fire enter + exit")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
             Spacer()
             Button(action: { activeSheet = .settings }) {
                 Image(systemName: "gearshape")
-                    .foregroundColor(authFailed ? .red : .secondary)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundColor(authFailed ? .insiderPrimary : .white.opacity(0.85))
+                    .frame(width: 34, height: 34)
             }
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .floating(cornerRadius: 16)
     }
 
-    // MARK: - Zone
+    /// Apple Maps puts the locate control on the map, not in a form — so does
+    /// this, which frees the panel below for the test itself.
+    private var locateButton: some View {
+        Button(action: goToOriginalLocation) {
+            Image(systemName: "location")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundColor(tracker.original == nil ? .secondary : .insiderHitPink)
+                .frame(width: 44, height: 44)
+        }
+        .floating(cornerRadius: 22)
+        .disabled(isSending || tracker.original == nil)
+    }
 
-    private var zoneCard: some View {
+    // MARK: - Control panel
+
+    private var controlPanel: some View {
+        VStack(spacing: 12) {
+            zoneRow
+            Divider()
+            HStack(spacing: 10) {
+                eventPill(title: "ENTER", done: entered, tint: .insiderPrimary)
+                eventPill(title: "EXIT", done: exited, tint: .insiderHitPink)
+            }
+            statusLine
+            paceButtons
+        }
+        .padding(14)
+        .floating(cornerRadius: 22)
+    }
+
+    private var zoneRow: some View {
         Button(action: fetchZones) {
             HStack(spacing: 12) {
                 ZStack {
                     Circle()
-                        .fill(Color.blue.opacity(0.15))
-                        .frame(width: 38, height: 38)
+                        .fill(Color.insiderPrimary.opacity(0.18))
+                        .frame(width: 36, height: 36)
                     if isLoadingZones {
                         ProgressView()
                     } else {
                         Image(systemName: selectedZone == nil
                               ? "mappin.and.ellipse" : "scope")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.insiderPrimary)
                     }
                 }
-
-                if let zone = selectedZone {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(zone.identifier)
-                            .font(.subheadline.bold())
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-                        Text(String(format: "r %.0f m · start %.0f m out · in and back",
-                                    zone.radius, zone.startDistance))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Choose a geofence")
-                            .font(.subheadline.bold())
-                            .foregroundColor(.primary)
-                        Text("Loads the zones configured for \(insiderPartner)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedZone?.identifier ?? "Choose a geofence")
+                        .font(.subheadline.bold())
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Text(selectedZone.map {
+                            String(format: "r %.0f m · start %.0f m out · in and back",
+                                   $0.radius, $0.startDistance)
+                         } ?? "Loads the zones configured for \(insiderPartner)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            .padding(12)
-            .background(Color(.secondarySystemGroupedBackground))
-            .cornerRadius(16)
         }
         .disabled(isLoadingZones)
     }
 
-    // MARK: - Progress
-
-    private var progressCard: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 10) {
-                eventPill(title: "ENTER", done: entered, tint: .green)
-                eventPill(title: "EXIT", done: exited, tint: .blue)
+    private var statusLine: some View {
+        HStack(spacing: 6) {
+            if !statusMessage.isEmpty {
+                Image(systemName: statusIsError
+                      ? "exclamationmark.triangle.fill" : "info.circle")
+                    .font(.caption2)
+                Text(statusMessage).font(.caption2).lineLimit(2)
+            } else if let metres = metresFromCentre {
+                Text(String(format: "%.0f m from centre · heading %@",
+                            metres, leg == "back" ? "out" : "in"))
+                    .font(.caption2)
+            } else {
+                Text("Idle").font(.caption2)
             }
-            HStack(spacing: 6) {
-                if !statusMessage.isEmpty {
-                    Image(systemName: statusIsError
-                          ? "exclamationmark.triangle.fill" : "info.circle")
-                        .font(.caption2)
-                    Text(statusMessage)
-                        .font(.caption2)
-                        .lineLimit(2)
-                } else if let metres = metresFromCentre {
-                    Text(String(format: "%.0f m from centre · heading %@",
-                                metres, leg == "back" ? "out" : "in"))
-                        .font(.caption2)
-                } else {
-                    Text("Idle").font(.caption2)
-                }
-                Spacer(minLength: 0)
-            }
-            .foregroundColor(statusIsError ? .red : .secondary)
+            Spacer(minLength: 0)
         }
-        .padding(12)
-        .background(Color(.secondarySystemGroupedBackground))
-        .cornerRadius(16)
+        .foregroundColor(statusIsError ? .red : .secondary)
     }
 
     private func eventPill(title: String, done: Bool, tint: Color) -> some View {
@@ -244,11 +294,12 @@ struct ContentView: View {
                 .foregroundColor(done ? tint : .secondary)
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
         .padding(.horizontal, 10)
-        .background((done ? tint : Color.secondary).opacity(done ? 0.15 : 0.08))
+        .background((done ? tint : Color.secondary).opacity(done ? 0.16 : 0.09))
         .cornerRadius(10)
     }
+
 
     // MARK: - Settings
 
@@ -313,43 +364,27 @@ struct ContentView: View {
 
     // MARK: - Actions
 
-    private var actionButtons: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                paceButton(title: "Walk", icon: "figure.walk", color: .blue, isRun: false)
-                paceButton(title: "Run", icon: "figure.run", color: .orange, isRun: true)
-                if isRunning {
-                    Button(action: togglePause) {
-                        Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                            .frame(width: 44)
-                            .padding(.vertical, 12)
-                    }
-                    .background(isPaused ? Color.green : Color.red)
-                    .foregroundColor(.white)
-                    .cornerRadius(14)
-                    .disabled(isSending)
+    private var paceButtons: some View {
+        HStack(spacing: 8) {
+            paceButton(title: "Walk", icon: "figure.walk", isRun: false)
+            paceButton(title: "Run", icon: "figure.run", isRun: true)
+            if isRunning {
+                Button(action: togglePause) {
+                    Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                        .frame(width: 42)
+                        .padding(.vertical, 12)
                 }
+                .background(isPaused ? Color.insiderPrimary : Color.insiderFaluRed)
+                .foregroundColor(.white)
+                .cornerRadius(13)
+                .disabled(isSending)
             }
-            Button(action: goToOriginalLocation) {
-                HStack {
-                    Image(systemName: "location.circle")
-                    Text(tracker.original == nil
-                         ? "Go to original location (waiting for GPS…)"
-                         : "Go to original location")
-                        .fontWeight(.semibold)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            }
-            .background(Color.green.opacity(0.15))
-            .foregroundColor(.green)
-            .cornerRadius(14)
-            .disabled(isSending || tracker.original == nil)
         }
     }
 
-    private func paceButton(title: String, icon: String,
-                            color: Color, isRun: Bool) -> some View {
+    /// Walk carries the logo gradient as the primary action; Run is the deep
+    /// falu red beneath it, so they read as a hierarchy rather than a pair.
+    private func paceButton(title: String, icon: String, isRun: Bool) -> some View {
         let active = isRunning && runMode == isRun
         return Button(action: { startTest(running: isRun) }) {
             HStack(spacing: 6) {
@@ -364,11 +399,21 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
         }
-        .background(color)
-        .foregroundColor(.white)
-        .cornerRadius(14)
+        .background(
+            Group {
+                if isRun {
+                    Color.insiderFaluRed
+                } else {
+                    insiderGradient
+                }
+            }
+        )
+        .foregroundColor(isRun ? Color.insiderHitPink : .white)
+        .cornerRadius(13)
+        .opacity(selectedZone == nil ? 0.45 : 1)
         .disabled(isSending || selectedZone == nil)
     }
+
 
     // MARK: - Zone list
 
