@@ -175,28 +175,53 @@ struct ContentView: View {
 
     // MARK: - Floating chrome
 
+    /// The title sits dead centre and stays there: the mark and the gear are
+    /// overlaid rather than laid out beside it, so the heading does not drift
+    /// as the subtitle changes length.
     private var topBar: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Geofence Panel")
-                    .font(.subheadline.bold())
+        ZStack {
+            VStack(spacing: 2) {
+                Text("Geofence Test")
+                    .font(.system(size: 16, weight: .semibold))
+                    .tracking(0.4)
+                    .foregroundColor(.white)
                 Text(selectedZone == nil
                      ? "Pick a zone to test"
                      : "In and back out to fire enter + exit")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
             }
-            Spacer()
-            Button(action: { activeSheet = .settings }) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundColor(authFailed ? .insiderPrimary : .white.opacity(0.85))
-                    .frame(width: 34, height: 34)
+            .frame(maxWidth: .infinity)
+
+            HStack {
+                brandMark
+                Spacer()
+                Button(action: { activeSheet = .settings }) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(authFailed ? .insiderPrimary : .white.opacity(0.85))
+                        .frame(width: 30, height: 30)
+                }
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .floating(cornerRadius: 16)
+        .padding(.vertical, 10)
+        .floating(cornerRadius: 18)
+    }
+
+    /// A nod to the Insider One mark — the logo's gradient ring, not a copy of
+    /// the glyph itself.
+    private var brandMark: some View {
+        ZStack {
+            Circle()
+                .fill(insiderGradient)
+                .frame(width: 26, height: 26)
+            Circle()
+                .fill(Color.insiderBackground)
+                .frame(width: 9, height: 9)
+                .offset(x: 3, y: -3)
+        }
     }
 
     /// Apple Maps puts the locate control on the map, not in a form — so does
@@ -268,6 +293,7 @@ struct ContentView: View {
 
     private var statusLine: some View {
         HStack(spacing: 6) {
+            Spacer(minLength: 0)
             if !statusMessage.isEmpty {
                 Image(systemName: statusIsError
                       ? "exclamationmark.triangle.fill" : "info.circle")
@@ -280,9 +306,11 @@ struct ContentView: View {
             } else {
                 Text("Idle").font(.caption2)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 0)   // paired with the leading one, so it centres
         }
-        .foregroundColor(statusIsError ? .red : .secondary)
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+        .foregroundColor(statusIsError ? .insiderPrimary : .secondary)
     }
 
     private func eventPill(title: String, done: Bool, tint: Color) -> some View {
@@ -305,54 +333,110 @@ struct ContentView: View {
 
     private var settingsSheet: some View {
         NavigationView {
-            Form {
-                Section(header: Text("Connection"),
-                        footer: Text("The token is printed by geofence_panel.py "
-                                     + "when it starts.")) {
-                    labelledField("Mac helper", systemImage: "desktopcomputer",
-                                  binding: $helperHost,
-                                  placeholder: "192.168.x.x", keyboard: .URL)
-                    labelledField("Token", systemImage: "key.fill",
-                                  binding: $helperToken,
-                                  placeholder: "from helper startup",
-                                  keyboard: .asciiCapable,
-                                  tint: authFailed ? .red : .primary)
-                }
-
-                Section(header: Text("Partner app"),
-                        footer: Text("iOS monitors at most 20 regions per app and "
-                                     + "keeps them across launches, so a zone added "
-                                     + "later is refused until the app is "
-                                     + "reinstalled. This reinstalls it from its own "
-                                     + "binary — no source needed — and clears its "
-                                     + "local data.")) {
-                    labelledField("Bundle id", systemImage: "app.badge",
-                                  binding: $partnerBundleID,
-                                  placeholder: "com.example.app", keyboard: .URL)
-                    Button(action: resetPartnerApp) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                            Text("Reset its geofence registrations")
-                        }
-                        .foregroundColor(.orange)
+            ScrollView {
+                VStack(spacing: 16) {
+                    settingsCard(
+                        title: "Connection",
+                        footer: "The token is printed by geofence_panel.py when it starts."
+                    ) {
+                        settingsField("Mac helper", icon: "desktopcomputer",
+                                      binding: $helperHost,
+                                      placeholder: "192.168.x.x", keyboard: .URL)
+                        settingsDivider
+                        settingsField("Token", icon: "key.fill",
+                                      binding: $helperToken,
+                                      placeholder: "from helper startup",
+                                      keyboard: .asciiCapable,
+                                      tint: authFailed ? .insiderPrimary : .white)
                     }
-                    .disabled(isSending)
+
+                    settingsCard(
+                        title: "Partner app",
+                        footer: "iOS monitors at most 20 regions per app and keeps them "
+                              + "across launches, so a zone added later is refused until "
+                              + "the app is reinstalled. This reinstalls it from its own "
+                              + "binary — no source needed — and clears its local data."
+                    ) {
+                        settingsField("Bundle id", icon: "app.badge",
+                                      binding: $partnerBundleID,
+                                      placeholder: "com.example.app", keyboard: .URL)
+                        settingsDivider
+                        Button(action: resetPartnerApp) {
+                            HStack(spacing: 7) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Text("Reset its geofence registrations")
+                                    .font(.subheadline.bold())
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundColor(.insiderHitPink)
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 12)
+                            .background(Color.insiderFaluRed.opacity(0.35))
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        }
+                        .disabled(isSending)
+                        .padding(.top, 2)
+                    }
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
             }
+            .background(Color.insiderBackground.ignoresSafeArea())
             .navigationBarTitle(Text("Settings"), displayMode: .inline)
             .navigationBarItems(trailing: Button("Done") { activeSheet = nil })
         }
     }
 
-    private func labelledField(_ title: String, systemImage: String,
+    /// A settings group on the brand ground, matching the panels over the map.
+    private func settingsCard<Content: View>(
+        title: String, footer: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.caption2.bold())
+                .tracking(1.1)
+                .foregroundColor(.insiderPrimary)
+                .padding(.leading, 4)
+
+            VStack(spacing: 10) {
+                content()
+            }
+            .padding(12)
+            .background(Color.white.opacity(0.05))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.insiderPrimary.opacity(0.14), lineWidth: 0.5)
+            )
+
+            Text(footer)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    private var settingsDivider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.08))
+            .frame(height: 0.5)
+    }
+
+    private func settingsField(_ title: String, icon: String,
                                binding: Binding<String>, placeholder: String,
                                keyboard: UIKeyboardType,
-                               tint: Color = .primary) -> some View {
-        HStack {
-            Label(title, systemImage: systemImage)
+                               tint: Color = .white) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundColor(tint == .white ? .insiderPrimary : tint)
+                .frame(width: 20)
+            Text(title)
                 .font(.subheadline)
                 .foregroundColor(tint)
-            Spacer()
+            Spacer(minLength: 8)
             TextField(placeholder, text: binding)
                 .keyboardType(keyboard)
                 .autocapitalization(.none)
