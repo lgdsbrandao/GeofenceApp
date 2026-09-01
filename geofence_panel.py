@@ -70,7 +70,6 @@ MAX_STEPS = 600           # bounds memory/CPU per request; see route_steps()
 MAX_RADIUS_M = 100_000
 SOCKET_TIMEOUT = 10       # seconds; stops slow clients from pinning threads
 LAN_MODE = "--lan" in sys.argv
-HAS_PMD3 = importlib.util.find_spec("pymobiledevice3") is not None
 
 GPX_TEMPLATE = """<?xml version="1.0"?>
 <gpx version="1.1" creator="geofence_panel">
@@ -164,6 +163,62 @@ def run(cmd, timeout=20, env=None):
         return 124, f"{cmd[0]} timed out"
 
 
+def python_minor(path):
+    """(major, minor) of an interpreter, or None if it will not run."""
+    code, out = run([path, "-c",
+                     "import sys;print('%d %d' % sys.version_info[:2])"], timeout=15)
+    if code != 0:
+        return None
+    try:
+        major, minor = out.split()[:2]
+        return int(major), int(minor)
+    except ValueError:
+        return None
+
+
+def resolve_device_python():
+    """Pick the interpreter to drive pymobiledevice3 with.
+
+    iOS 18.2+ dropped QUIC, so the device tunnel needs pymobiledevice3's TCP
+    path, which requires Python 3.13+. The interpreter running this helper is
+    usually the Xcode-bundled 3.9, which cannot do it — hence the override.
+
+    GEOFENCE_PYTHON wins if set. Otherwise look for a 3.13+ that actually has
+    pymobiledevice3 installed, and fall back to our own interpreter so the
+    simulator path keeps working either way.
+    """
+    def usable(path):
+        return path if run([path, "-c", "import pymobiledevice3"], timeout=25)[0] == 0 else None
+
+    explicit = os.environ.get("GEOFENCE_PYTHON", "").strip()
+    if explicit:
+        resolved = shutil.which(explicit) or (explicit if os.path.exists(explicit) else None)
+        if resolved and usable(resolved):
+            return resolved, True
+        print(f"  GEOFENCE_PYTHON={explicit!r} cannot import pymobiledevice3; ignoring it.")
+
+    # A project venv first: Homebrew's Python is externally managed (PEP 668),
+    # so pymobiledevice3 usually ends up in a venv rather than beside it.
+    for candidate in (str(HERE / ".venv/bin/python"),
+                      os.path.expanduser("~/.geofence-venv/bin/python")):
+        if os.path.exists(candidate) and usable(candidate):
+            return candidate, True
+
+    for minor in (15, 14, 13):
+        for candidate in (f"python3.{minor}",
+                          f"/opt/homebrew/bin/python3.{minor}",
+                          f"/usr/local/bin/python3.{minor}"):
+            path = shutil.which(candidate) if "/" not in candidate else (
+                candidate if os.path.exists(candidate) else None)
+            if path and usable(path):
+                return path, True
+
+    return sys.executable, usable(sys.executable) is not None
+
+
+DEVICE_PYTHON, HAS_PMD3 = resolve_device_python()
+
+
 BOOTED_CACHE = {"udids": [], "ts": 0.0}
 
 
@@ -239,12 +294,12 @@ def start_device_play(lat1, lon1, lat2, lon2, speed=WALK_SPEED,
         # `play` takes a few seconds to spin up, which would leave the phone
         # at its previous position; set the start coordinate first so it
         # jumps there immediately and `play` walks on from there.
-        run([sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
+        run([DEVICE_PYTHON, "-m", "pymobiledevice3", "developer", "dvt",
              "simulate-location", "set", "--tunnel", "", "--",
              str(lat1), str(lon1)], timeout=25)
         with DEVICE_PLAY_LOG.open("w") as log:
             DEVICE_PLAY_PROC = subprocess.Popen(
-                [sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
+                [DEVICE_PYTHON, "-m", "pymobiledevice3", "developer", "dvt",
                  "simulate-location", "play", str(DEVICE_GPX_PATH),
                  "--tunnel", ""],
                 stdout=log, stderr=log,
@@ -399,7 +454,7 @@ def stop_all():
     if HAS_PMD3:
         def clear_device():
             code, _ = run(
-                [sys.executable, "-m", "pymobiledevice3", "developer", "dvt",
+                [DEVICE_PYTHON, "-m", "pymobiledevice3", "developer", "dvt",
                  "simulate-location", "clear", "--tunnel", ""],
                 timeout=30,
             )
@@ -677,6 +732,17 @@ def main():
           f"(also {binds[1]})")
     print(f"GPX file: {GPX_PATH}")
     print(f"Walk speed: {WALK_SPEED} m/s")
+    version = python_minor(DEVICE_PYTHON)
+    label = f"{version[0]}.{version[1]}" if version else "?"
+    if not HAS_PMD3:
+        print("Device: pymobiledevice3 not installed — simulator only.")
+    elif version and version >= (3, 13):
+        print(f"Device: {DEVICE_PYTHON} (Python {label})")
+    else:
+        print(f"Device: {DEVICE_PYTHON} (Python {label}) — too old for iOS 18.2+.")
+        print("  iOS 18.2+ dropped QUIC, so the tunnel needs pymobiledevice3's")
+        print("  TCP path, which wants Python 3.13+. Install one and point at it:")
+        print("    GEOFENCE_PYTHON=/opt/homebrew/bin/python3.13 python3 geofence_panel.py --lan")
     print()
     print(f"  TOKEN: {TOKEN}")
     print("  Paste this into the app's Token field (saved in .geofence_token).")
