@@ -26,6 +26,39 @@ extension UIColor {
     static let insiderOrange  = UIColor(red: 242/255, green: 110/255, blue: 60/255, alpha: 1)
 }
 
+/// Surfaces that follow the device appearance. The brand accents above are
+/// fixed — they are the identity — but the grounds they sit on have to work in
+/// both light and dark, so these resolve per trait collection.
+extension Color {
+    /// Ground for the sheets.
+    static let insiderGround = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 24/255, green: 24/255, blue: 25/255, alpha: 1)
+            : .systemGroupedBackground
+    })
+
+    /// A card resting on that ground.
+    static let insiderCard = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(white: 1, alpha: 0.05)
+            : .secondarySystemGroupedBackground
+    })
+
+    /// The same card when it is the selected one.
+    static let insiderCardSelected = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(white: 1, alpha: 0.10)
+            : UIColor(red: 244/255, green: 72/255, blue: 43/255, alpha: 0.10)
+    })
+
+    /// Tint laid over the blur on the panels floating above the map.
+    static let insiderPanelTint = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 24/255, green: 24/255, blue: 25/255, alpha: 0.55)
+            : UIColor(white: 1, alpha: 0.30)
+    })
+}
+
 /// The logo gradient. Used on the primary action only — spending it everywhere
 /// would flatten the hierarchy it exists to create.
 let insiderGradient = LinearGradient(

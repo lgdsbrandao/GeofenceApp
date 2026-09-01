@@ -85,7 +85,7 @@ private let runSpeedMps = 10.0
 /// SwiftUI's `.ultraThinMaterial` is iOS 15+, and this app still targets 14,
 /// so the blur comes from UIKit.
 struct BlurView: UIViewRepresentable {
-    var style: UIBlurEffect.Style = .systemThickMaterialDark
+    var style: UIBlurEffect.Style = .systemThickMaterial
 
     func makeUIView(context: Context) -> UIVisualEffectView {
         UIVisualEffectView(effect: UIBlurEffect(style: style))
@@ -103,8 +103,8 @@ extension View {
         self
             .background(
                 ZStack {
-                    BlurView(style: .systemThickMaterialDark)
-                    Color.insiderBackground.opacity(0.55)
+                    BlurView()
+                    Color.insiderPanelTint
                 }
             )
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -164,7 +164,6 @@ struct ContentView: View {
             .padding(.bottom, 8)
         }
         .accentColor(.insiderPrimary)
-        .preferredColorScheme(.dark)   // the brand is a dark ground
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .zones: zoneList
@@ -184,7 +183,7 @@ struct ContentView: View {
                 Text("Geofence Test")
                     .font(.system(size: 16, weight: .semibold))
                     .tracking(0.4)
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                 Text(selectedZone == nil
                      ? "Pick a zone to test"
                      : "In and back out to fire enter + exit")
@@ -200,7 +199,7 @@ struct ContentView: View {
                 Button(action: { activeSheet = .settings }) {
                     Image(systemName: "gearshape")
                         .font(.system(size: 17, weight: .medium))
-                        .foregroundColor(authFailed ? .insiderPrimary : .white.opacity(0.85))
+                        .foregroundColor(authFailed ? .insiderPrimary : .primary.opacity(0.85))
                         .frame(width: 30, height: 30)
                 }
             }
@@ -210,30 +209,12 @@ struct ContentView: View {
         .floating(cornerRadius: 18)
     }
 
-    /// Stand-in for the Insider One mark: the logo's squircle silhouette with
-    /// its notches punched out, in the logo gradient.
-    ///
-    /// This is drawn, not the official artwork — the real asset was not
-    /// available, and the old circle-and-wordmark logo on disk is the previous
-    /// identity. Swap in the supplied file and delete this when it arrives.
     private var brandMark: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(insiderGradient)
-
-            // Real holes rather than background-coloured discs, so the mark
-            // sits correctly on the blurred panel behind it.
-            Circle()
-                .frame(width: 10, height: 10)
-                .offset(x: 9, y: -5)
-                .blendMode(.destinationOut)
-            Circle()
-                .frame(width: 7, height: 7)
-                .offset(x: -9, y: 8)
-                .blendMode(.destinationOut)
-        }
-        .compositingGroup()
-        .frame(width: 26, height: 26)
+        Image("InsiderMark")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 26, height: 26)
+            .accessibilityLabel("Insider One")
     }
 
     /// Apple Maps puts the locate control on the map, not in a form — so does
@@ -359,7 +340,7 @@ struct ContentView: View {
                                       binding: $helperToken,
                                       placeholder: "from helper startup",
                                       keyboard: .asciiCapable,
-                                      tint: authFailed ? .insiderPrimary : .white)
+                                      tint: authFailed ? .insiderPrimary : .primary)
                     }
 
                     settingsCard(
@@ -393,7 +374,7 @@ struct ContentView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 14)
             }
-            .background(Color.insiderBackground.ignoresSafeArea())
+            .background(Color.insiderGround.ignoresSafeArea())
             .navigationBarTitle(Text("Settings"), displayMode: .inline)
             .navigationBarItems(trailing: Button("Done") { activeSheet = nil })
         }
@@ -415,7 +396,7 @@ struct ContentView: View {
                 content()
             }
             .padding(12)
-            .background(Color.white.opacity(0.05))
+            .background(Color.insiderCard)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -432,18 +413,18 @@ struct ContentView: View {
 
     private var settingsDivider: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.08))
+            .fill(Color.primary.opacity(0.10))
             .frame(height: 0.5)
     }
 
     private func settingsField(_ title: String, icon: String,
                                binding: Binding<String>, placeholder: String,
                                keyboard: UIKeyboardType,
-                               tint: Color = .white) -> some View {
+                               tint: Color = .primary) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.system(size: 14))
-                .foregroundColor(tint == .white ? .insiderPrimary : tint)
+                .foregroundColor(tint == Color.primary ? .insiderPrimary : tint)
                 .frame(width: 20)
             Text(title)
                 .font(.subheadline)
@@ -533,7 +514,7 @@ struct ContentView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
             }
-            .background(Color.insiderBackground.ignoresSafeArea())
+            .background(Color.insiderGround.ignoresSafeArea())
             .navigationBarTitle(Text("\(zones.count) geofences"), displayMode: .inline)
             .navigationBarItems(trailing: Button("Done") { activeSheet = nil })
         }
@@ -555,7 +536,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(zone.identifier)
                         .font(.subheadline.bold())
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                         .lineLimit(1)
                     Text(String(format: "%.5f, %.5f · r %.0f m",
                                 zone.latitude, zone.longitude, zone.radius))
@@ -578,7 +559,7 @@ struct ContentView: View {
                 }
             }
             .padding(12)
-            .background(Color.white.opacity(isSelected ? 0.10 : 0.05))
+            .background(isSelected ? Color.insiderCardSelected : Color.insiderCard)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
