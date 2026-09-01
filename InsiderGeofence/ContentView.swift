@@ -210,18 +210,30 @@ struct ContentView: View {
         .floating(cornerRadius: 18)
     }
 
-    /// A nod to the Insider One mark — the logo's gradient ring, not a copy of
-    /// the glyph itself.
+    /// Stand-in for the Insider One mark: the logo's squircle silhouette with
+    /// its notches punched out, in the logo gradient.
+    ///
+    /// This is drawn, not the official artwork — the real asset was not
+    /// available, and the old circle-and-wordmark logo on disk is the previous
+    /// identity. Swap in the supplied file and delete this when it arrives.
     private var brandMark: some View {
         ZStack {
-            Circle()
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(insiderGradient)
-                .frame(width: 26, height: 26)
+
+            // Real holes rather than background-coloured discs, so the mark
+            // sits correctly on the blurred panel behind it.
             Circle()
-                .fill(Color.insiderBackground)
-                .frame(width: 9, height: 9)
-                .offset(x: 3, y: -3)
+                .frame(width: 10, height: 10)
+                .offset(x: 9, y: -5)
+                .blendMode(.destinationOut)
+            Circle()
+                .frame(width: 7, height: 7)
+                .offset(x: -9, y: 8)
+                .blendMode(.destinationOut)
         }
+        .compositingGroup()
+        .frame(width: 26, height: 26)
     }
 
     /// Apple Maps puts the locate control on the map, not in a form — so does
