@@ -871,7 +871,11 @@ struct ContentView: View {
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
+        // Trimmed: pasting a token easily carries a trailing space or
+        // newline, and the helper compares it exactly — that lands as a
+        // 401 that looks like a wrong token rather than a stray character.
+        request.setValue(helperToken.trimmingCharacters(in: .whitespacesAndNewlines),
+                         forHTTPHeaderField: "X-Geofence-Token")
         request.timeoutInterval = 15
         if let body = body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -913,7 +917,11 @@ struct ContentView: View {
         let host = helperHost.trimmingCharacters(in: .whitespaces)
         guard isRunning, let url = URL(string: "http://\(host):8766/status") else { return }
         var request = URLRequest(url: url)
-        request.setValue(helperToken, forHTTPHeaderField: "X-Geofence-Token")
+        // Trimmed: pasting a token easily carries a trailing space or
+        // newline, and the helper compares it exactly — that lands as a
+        // 401 that looks like a wrong token rather than a stray character.
+        request.setValue(helperToken.trimmingCharacters(in: .whitespacesAndNewlines),
+                         forHTTPHeaderField: "X-Geofence-Token")
         request.timeoutInterval = 15
 
         URLSession.shared.dataTask(with: request) { data, _, _ in
