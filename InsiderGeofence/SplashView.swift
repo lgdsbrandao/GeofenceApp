@@ -180,47 +180,36 @@ struct SplashView: View {
     private let markSize: CGFloat = 112
 
     var body: some View {
+        // The mark is the one thing that must sit dead centre of the screen,
+        // so it is the only child in the middle of the stack: the halo is
+        // centred on it, and the name hangs beneath it as an overlay, which
+        // adds nothing to the layout and so cannot pull the centre down.
         ZStack {
-            Color.insiderBackground.ignoresSafeArea()
+            Color.insiderBackground
 
             // A quiet warm halo behind the mark, so the gradient has
             // something to sit in rather than floating on flat black.
             RadialGradient(colors: [Color.insiderPrimary.opacity(0.22), .clear],
                            center: .center, startRadius: 4, endRadius: 190)
                 .frame(width: 380, height: 380)
-                .offset(y: -30)
 
-            VStack(spacing: 26) {
-                ZStack {
-                    globe
-                        .frame(width: markSize, height: markSize)
-                        .opacity(globeOpacity)
-                        .scaleEffect(globeScale)
+            ZStack {
+                globe
+                    .frame(width: markSize, height: markSize)
+                    .opacity(globeOpacity)
+                    .scaleEffect(globeScale)
 
-                    Image("InsiderMark")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: markSize, height: markSize)
-                        .opacity(logoOpacity)
-                        .scaleEffect(logoScale)
-                }
-                .frame(width: markSize, height: markSize)
-
-                VStack(spacing: 6) {
-                    Text("Insider One")
-                        .font(.system(size: 22, weight: .semibold))
-                        .tracking(0.6)
-                        .foregroundColor(.white)
-                    Text("Geofence Health Check")
-                        .font(.system(size: 15, weight: .medium))
-                        .tracking(0.3)
-                        .foregroundColor(.insiderHitPink)
-                }
-                .opacity(titleOpacity)
-                .offset(y: titleOffset)
+                Image("InsiderMark")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: markSize, height: markSize)
+                    .opacity(logoOpacity)
+                    .scaleEffect(logoScale)
             }
-            .offset(y: -30)
+            .frame(width: markSize, height: markSize)
+            .overlay(title.padding(.top, markSize + 26), alignment: .top)
         }
+        .ignoresSafeArea()
         .opacity(screenOpacity)
         .onAppear(perform: run)
         .onReceive(ticker) { _ in
@@ -235,12 +224,28 @@ struct SplashView: View {
         EarthView(phase: phase)
     }
 
+    private var title: some View {
+        VStack(spacing: 6) {
+            Text("Insider One")
+                .font(.system(size: 22, weight: .semibold))
+                .tracking(0.6)
+                .foregroundColor(.white)
+            Text("Geofence Health Check")
+                .font(.system(size: 15, weight: .medium))
+                .tracking(0.3)
+                .foregroundColor(.insiderHitPink)
+        }
+        .fixedSize()
+        .opacity(titleOpacity)
+        .offset(y: titleOffset)
+    }
+
     private func run() {
         if reduceMotion {
             // No spin: the mark and name simply appear, then hand over.
             logoOpacity = 1; logoScale = 1
             titleOpacity = 1; titleOffset = 0
-            after(1.4) { fadeOutAndFinish() }
+            after(2.6) { fadeOutAndFinish() }
             return
         }
 
@@ -272,8 +277,8 @@ struct SplashView: View {
             }
         }
 
-        // 4. Hold, then hand over to the app.
-        after(3.5) { fadeOutAndFinish() }
+        // 4. Hold on the mark and name, then hand over to the app.
+        after(4.7) { fadeOutAndFinish() }
     }
 
     private func fadeOutAndFinish() {
