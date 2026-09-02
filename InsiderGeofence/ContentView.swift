@@ -185,7 +185,7 @@ struct ContentView: View {
     private var topBar: some View {
         ZStack {
             VStack(spacing: 2) {
-                Text("Geofence Test")
+                Text("Geofence Health Check")
                     .font(.system(size: 16, weight: .semibold))
                     .tracking(0.4)
                     .foregroundColor(.primary)

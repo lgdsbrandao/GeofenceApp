@@ -63,6 +63,63 @@ struct GlobeShape: Shape {
     }
 }
 
+/// A real Earth, turning.
+///
+/// SF Symbols ships three photographic-order hemispheres — Americas, then
+/// Europe/Africa, then Asia/Australia — which is exactly the sequence you see
+/// looking at a globe turning eastward. Crossfading through them in that
+/// order, with each set of continents drifting slightly west as it hands over
+/// to the next, reads as rotation without any 3D. The ocean disc is masked
+/// to a circle so the drift moves the land, not the planet.
+@available(iOS 15.0, *)
+struct EarthGlobe: View {
+    /// One full cycle through the three faces per unit.
+    var phase: Double
+
+    private let faces = ["globe.americas.fill",
+                         "globe.europe.africa.fill",
+                         "globe.asia.australia.fill"]
+
+    var body: some View {
+        let t = phase.truncatingRemainder(dividingBy: 1) * 3
+        let index = Int(t) % 3
+        let next = (index + 1) % 3
+        let raw = t - Double(Int(t))
+        // Hold each face, then hand over in the last 40% of its slot.
+        let f = max(0, (raw - 0.6) / 0.4)
+        let blend = f * f * (3 - 2 * f)   // smoothstep
+
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            let drift = side * 0.10
+            ZStack {
+                face(faces[index])
+                    .offset(x: -blend * drift)
+                    .opacity(1 - blend)
+                face(faces[next])
+                    .offset(x: (1 - blend) * drift)
+                    .opacity(blend)
+                // Limb shading so the disc reads as a sphere, not a coin.
+                Circle()
+                    .fill(RadialGradient(colors: [.clear, Color.black.opacity(0.55)],
+                                         center: UnitPoint(x: 0.42, y: 0.38),
+                                         startRadius: side * 0.15, endRadius: side * 0.58))
+                    .blendMode(.multiply)
+            }
+            .frame(width: side, height: side)
+            .clipShape(Circle())
+            .position(x: geo.size.width / 2, y: geo.size.height / 2)
+        }
+    }
+
+    private func face(_ name: String) -> some View {
+        insiderGradient
+            .mask(Image(systemName: name)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit))
+    }
+}
+
 /// Cold-start screen: a spinning globe that resolves into the Insider One
 /// mark, with the app's name settling in beneath it.
 struct SplashView: View {
@@ -72,6 +129,10 @@ struct SplashView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var phase = 0.0
+    @State private var spinning = true
+    /// Drives `phase` by hand: a repeating withAnimation only reaches
+    /// animatable modifiers, and the Earth picks its faces in `body`.
+    private let ticker = Timer.publish(every: 1.0 / 60, on: .main, in: .common).autoconnect()
     @State private var globeOpacity = 0.0
     @State private var globeScale = 0.72
     @State private var logoOpacity = 0.0
@@ -95,17 +156,10 @@ struct SplashView: View {
 
             VStack(spacing: 26) {
                 ZStack {
-                    ZStack {
-                        GlobeShape(phase: phase, front: false, withFrame: false)
-                            .stroke(Color.insiderHitPink.opacity(0.28),
-                                    style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
-                        GlobeShape(phase: phase, front: true)
-                            .stroke(Color.insiderHitPink.opacity(0.92),
-                                    style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
-                    }
-                    .frame(width: markSize, height: markSize)
-                    .opacity(globeOpacity)
-                    .scaleEffect(globeScale)
+                    globe
+                        .frame(width: markSize, height: markSize)
+                        .opacity(globeOpacity)
+                        .scaleEffect(globeScale)
 
                     Image("InsiderMark")
                         .resizable()
@@ -116,19 +170,45 @@ struct SplashView: View {
                 }
                 .frame(width: markSize, height: markSize)
 
-                Text("Geofence Test App")
-                    .font(.system(size: 22, weight: .semibold))
-                    .tracking(0.6)
-                    .foregroundColor(.white)
-                    .opacity(titleOpacity)
-                    .offset(y: titleOffset)
+                VStack(spacing: 6) {
+                    Text("Insider One")
+                        .font(.system(size: 22, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundColor(.white)
+                    Text("Geofence Health Check")
+                        .font(.system(size: 15, weight: .medium))
+                        .tracking(0.3)
+                        .foregroundColor(.insiderHitPink)
+                }
+                .opacity(titleOpacity)
+                .offset(y: titleOffset)
             }
             .offset(y: -30)
         }
         .opacity(screenOpacity)
         .onAppear(perform: run)
+        .onReceive(ticker) { _ in
+            guard spinning else { return }
+            phase += 1.0 / 60 / 2.7   // one full cycle every 2.7 s
+        }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Geofence Test App")
+        .accessibilityLabel("Insider One, Geofence Health Check")
+    }
+
+    @ViewBuilder
+    private var globe: some View {
+        if #available(iOS 15.0, *) {
+            EarthGlobe(phase: phase)
+        } else {
+            ZStack {
+                GlobeShape(phase: phase, front: false, withFrame: false)
+                    .stroke(Color.insiderHitPink.opacity(0.28),
+                            style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
+                GlobeShape(phase: phase, front: true)
+                    .stroke(Color.insiderHitPink.opacity(0.92),
+                            style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+            }
+        }
     }
 
     private func run() {
@@ -145,9 +225,6 @@ struct SplashView: View {
             globeOpacity = 1
             globeScale = 1
         }
-        withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) {
-            phase = 1
-        }
 
         // 2. It resolves into the mark: the globe tightens and fades as the
         //    mark springs up through it.
@@ -156,6 +233,7 @@ struct SplashView: View {
                 globeOpacity = 0
                 globeScale = 0.62
             }
+            after(0.5) { spinning = false }
             withAnimation(.interpolatingSpring(stiffness: 170, damping: 15).delay(0.08)) {
                 logoOpacity = 1
                 logoScale = 1
