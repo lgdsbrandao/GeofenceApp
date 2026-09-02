@@ -7,116 +7,153 @@
 
 import SwiftUI
 
-/// One hemisphere of a wireframe globe, orthographically projected.
+/// The Earth as vector geometry on a rotating sphere.
 ///
-/// A meridian at longitude λ from the viewer projects to a half-ellipse
-/// bowed sideways by sin(λ); as λ advances it sweeps across the face from one
-/// limb to the other, which is what reads as rotation. Only the meridians
-/// with cos(λ) on this shape's side are drawn, so the near hemisphere can be
-/// stroked bright and the far one dim — the depth cue that sells the turn.
-///
-/// (Drawing full ellipses for every meridian does not work: with even spacing
-/// the set of widths is identical at every instant, so nothing visibly moves.)
-struct GlobeShape: Shape {
+/// Coastlines are coarse lat/lon polygons — stylised, as befits 112 points —
+/// projected orthographically with the axis tilted toward the viewer.
+/// Driving the longitude continuously turns the sphere for real: land
+/// foreshortens toward the limb and slides behind it, which is the same
+/// motion the wireframe globe had, now with a planet on it. Vertices on the
+/// far side are pushed out to the horizon so a continent straddling the
+/// limb is cut cleanly rather than folding across the face.
+struct EarthShape: Shape {
+    enum Layer { case land, graticule }
+
+    var layer: Layer
     /// One full turn per unit.
     var phase: Double
-    /// Near hemisphere when true, far when false.
-    var front = true
-    /// Parallels and the outline belong to the near side only.
-    var withFrame = true
+    /// Axis tilt toward the viewer, radians. ~23°, the real obliquity.
+    var tilt = 0.40
 
     var animatableData: Double {
         get { phase }
         set { phase = newValue }
     }
 
+    // (longitude, latitude) in degrees, one polygon per landmass.
+    private static let land: [[(Double, Double)]] = [
+        // North America
+        [(-168,66),(-140,70),(-95,72),(-80,62),(-60,47),(-70,42),(-76,35),(-80,26),
+         (-90,30),(-97,26),(-105,20),(-88,15),(-77,8),(-84,10),(-105,23),(-115,30),
+         (-124,40),(-130,55),(-150,60),(-165,58)],
+        // Greenland
+        [(-55,60),(-42,60),(-20,70),(-25,82),(-60,82),(-70,76)],
+        // South America
+        [(-77,8),(-60,10),(-50,0),(-35,-5),(-38,-15),(-42,-23),(-48,-28),(-53,-34),
+         (-58,-39),(-65,-45),(-68,-52),(-72,-53),(-75,-45),(-71,-30),(-70,-18),(-81,-5)],
+        // Africa
+        [(-17,15),(-6,36),(10,37),(20,32),(32,31),(43,12),(51,12),(40,-2),(40,-15),
+         (35,-25),(30,-34),(18,-34),(12,-17),(9,-2),(9,5),(-8,5)],
+        // Eurasia, with Arabia and India as bumps on the south coast
+        [(-10,36),(0,44),(5,58),(20,71),(60,72),(100,78),(140,72),(180,68),(158,58),
+         (140,48),(122,40),(122,30),(110,20),(100,5),(90,22),(80,15),(77,8),(72,20),
+         (60,25),(58,15),(45,13),(43,25),(35,36),(28,37),(20,38),(10,44)],
+        // Australia
+        [(114,-22),(122,-17),(135,-12),(142,-11),(146,-19),(153,-27),(150,-37),
+         (140,-38),(130,-32),(116,-35)],
+        // Antarctica — a cap ringing the pole
+        [(-180,-70),(-150,-72),(-120,-74),(-90,-72),(-60,-68),(-30,-72),(0,-70),
+         (30,-68),(60,-67),(90,-66),(120,-66),(150,-70),(180,-70),(180,-90),(-180,-90)],
+    ]
+
     func path(in rect: CGRect) -> Path {
         var path = Path()
         let r = min(rect.width, rect.height) / 2
         let c = CGPoint(x: rect.midX, y: rect.midY)
+        let spin = phase * 2 * .pi
 
-        if withFrame {
-            path.addEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
-            for lat in [-1.0, -0.5, 0.0, 0.5, 1.0] {
-                let y = c.y - CGFloat(sin(lat)) * r
-                let half = r * CGFloat(cos(lat))
-                path.move(to: CGPoint(x: c.x - half, y: y))
-                path.addLine(to: CGPoint(x: c.x + half, y: y))
+        // Sphere point for a lon/lat after spin and tilt: screen x, y and
+        // depth z (positive = toward the viewer).
+        func place(_ lonDeg: Double, _ latDeg: Double) -> (x: Double, y: Double, z: Double) {
+            let lon = lonDeg * .pi / 180 + spin
+            let lat = latDeg * .pi / 180
+            let x = cos(lat) * sin(lon)
+            let y = sin(lat)
+            let z = cos(lat) * cos(lon)
+            return (x, y * cos(tilt) - z * sin(tilt), y * sin(tilt) + z * cos(tilt))
+        }
+        func screen(_ p: (x: Double, y: Double, z: Double)) -> CGPoint {
+            var (x, y) = (p.x, p.y)
+            if p.z < 0 {                       // behind: clamp to the horizon
+                let len = max(sqrt(x * x + y * y), 1e-6)
+                x /= len; y /= len
             }
+            return CGPoint(x: c.x + CGFloat(x) * r, y: c.y - CGFloat(y) * r)
         }
 
-        let meridians = 8
-        let segments = 28
-        for i in 0..<meridians {
-            let lon = phase * 2 * .pi + Double(i) * 2 * .pi / Double(meridians)
-            let facing = cos(lon)
-            guard front ? facing > 0 : facing < 0 else { continue }
-            let bow = CGFloat(sin(lon)) * r
-            for k in 0...segments {
-                let lat = -Double.pi / 2 + Double.pi * Double(k) / Double(segments)
-                let point = CGPoint(x: c.x + bow * CGFloat(cos(lat)),
-                                    y: c.y - r * CGFloat(sin(lat)))
-                k == 0 ? path.move(to: point) : path.addLine(to: point)
+        switch layer {
+        case .land:
+            for polygon in Self.land {
+                let placed = polygon.map { place($0.0, $0.1) }
+                guard placed.contains(where: { $0.z > 0 }) else { continue }
+                for (i, p) in placed.enumerated() {
+                    i == 0 ? path.move(to: screen(p)) : path.addLine(to: screen(p))
+                }
+                path.closeSubpath()
+            }
+
+        case .graticule:
+            // Meridians every 30°, parallels every 30°: only the near side.
+            for lonDeg in stride(from: -180.0, to: 180.0, by: 30.0) {
+                var drawing = false
+                for latDeg in stride(from: -90.0, through: 90.0, by: 5.0) {
+                    let p = place(lonDeg, latDeg)
+                    if p.z <= 0 { drawing = false; continue }
+                    let q = screen(p)
+                    drawing ? path.addLine(to: q) : path.move(to: q)
+                    drawing = true
+                }
+            }
+            for latDeg in stride(from: -60.0, through: 60.0, by: 30.0) {
+                var drawing = false
+                for lonDeg in stride(from: -180.0, through: 180.0, by: 5.0) {
+                    let p = place(lonDeg, latDeg)
+                    if p.z <= 0 { drawing = false; continue }
+                    let q = screen(p)
+                    drawing ? path.addLine(to: q) : path.move(to: q)
+                    drawing = true
+                }
             }
         }
         return path
     }
 }
 
-/// A real Earth, turning.
-///
-/// SF Symbols ships three photographic-order hemispheres — Americas, then
-/// Europe/Africa, then Asia/Australia — which is exactly the sequence you see
-/// looking at a globe turning eastward. Crossfading through them in that
-/// order, with each set of continents drifting slightly west as it hands over
-/// to the next, reads as rotation without any 3D. The ocean disc is masked
-/// to a circle so the drift moves the land, not the planet.
-@available(iOS 15.0, *)
-struct EarthGlobe: View {
-    /// One full cycle through the three faces per unit.
+/// The turning planet: ocean, land, a faint graticule for the spin cue, limb
+/// shading and a highlight so the disc reads as a sphere.
+struct EarthView: View {
     var phase: Double
 
-    private let faces = ["globe.americas.fill",
-                         "globe.europe.africa.fill",
-                         "globe.asia.australia.fill"]
+    private let ocean = RadialGradient(
+        colors: [Color(red: 0.36, green: 0.68, blue: 0.93), Color(red: 0.06, green: 0.25, blue: 0.52)],
+        center: UnitPoint(x: 0.40, y: 0.36), startRadius: 4, endRadius: 80)
+    private let land = LinearGradient(
+        colors: [Color(red: 0.52, green: 0.80, blue: 0.45), Color(red: 0.19, green: 0.55, blue: 0.32)],
+        startPoint: .topLeading, endPoint: .bottomTrailing)
 
     var body: some View {
-        let t = phase.truncatingRemainder(dividingBy: 1) * 3
-        let index = Int(t) % 3
-        let next = (index + 1) % 3
-        let raw = t - Double(Int(t))
-        // Hold each face, then hand over in the last 40% of its slot.
-        let f = max(0, (raw - 0.6) / 0.4)
-        let blend = f * f * (3 - 2 * f)   // smoothstep
-
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
-            let drift = side * 0.10
             ZStack {
-                face(faces[index])
-                    .offset(x: -blend * drift)
-                    .opacity(1 - blend)
-                face(faces[next])
-                    .offset(x: (1 - blend) * drift)
-                    .opacity(blend)
-                // Limb shading so the disc reads as a sphere, not a coin.
-                Circle()
-                    .fill(RadialGradient(colors: [.clear, Color.black.opacity(0.55)],
-                                         center: UnitPoint(x: 0.42, y: 0.38),
-                                         startRadius: side * 0.15, endRadius: side * 0.58))
+                Circle().fill(ocean)
+                EarthShape(layer: .land, phase: phase).fill(land)
+                EarthShape(layer: .graticule, phase: phase)
+                    .stroke(Color.white.opacity(0.22), lineWidth: 0.7)
+                Circle().fill(RadialGradient(
+                    colors: [.clear, Color.black.opacity(0.55)],
+                    center: UnitPoint(x: 0.40, y: 0.36),
+                    startRadius: side * 0.20, endRadius: side * 0.60))
                     .blendMode(.multiply)
+                Circle().fill(RadialGradient(
+                    colors: [Color.white.opacity(0.35), .clear],
+                    center: UnitPoint(x: 0.32, y: 0.26),
+                    startRadius: 0, endRadius: side * 0.28))
+                    .blendMode(.screen)
             }
             .frame(width: side, height: side)
             .clipShape(Circle())
             .position(x: geo.size.width / 2, y: geo.size.height / 2)
         }
-    }
-
-    private func face(_ name: String) -> some View {
-        insiderGradient
-            .mask(Image(systemName: name)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit))
     }
 }
 
@@ -130,8 +167,7 @@ struct SplashView: View {
 
     @State private var phase = 0.0
     @State private var spinning = true
-    /// Drives `phase` by hand: a repeating withAnimation only reaches
-    /// animatable modifiers, and the Earth picks its faces in `body`.
+    /// Drives `phase` by hand at 60 Hz for a steady, continuous turn.
     private let ticker = Timer.publish(every: 1.0 / 60, on: .main, in: .common).autoconnect()
     @State private var globeOpacity = 0.0
     @State private var globeScale = 0.72
@@ -189,26 +225,14 @@ struct SplashView: View {
         .onAppear(perform: run)
         .onReceive(ticker) { _ in
             guard spinning else { return }
-            phase += 1.0 / 60 / 2.7   // one full cycle every 2.7 s
+            phase += 1.0 / 60 / 2.4   // one full turn every 2.4 s, as the wireframe had
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Insider One, Geofence Health Check")
     }
 
-    @ViewBuilder
     private var globe: some View {
-        if #available(iOS 15.0, *) {
-            EarthGlobe(phase: phase)
-        } else {
-            ZStack {
-                GlobeShape(phase: phase, front: false, withFrame: false)
-                    .stroke(Color.insiderHitPink.opacity(0.28),
-                            style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
-                GlobeShape(phase: phase, front: true)
-                    .stroke(Color.insiderHitPink.opacity(0.92),
-                            style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
-            }
-        }
+        EarthView(phase: phase)
     }
 
     private func run() {
