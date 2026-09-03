@@ -8,6 +8,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import Security
 
 /// Tracks two different things, and the difference matters.
 ///
@@ -116,6 +117,106 @@ extension View {
     }
 }
 
+/// A tiny wrapper over the Keychain for a single string secret.
+///
+/// The helper bearer token is a credential, so it is kept in the Keychain
+/// rather than the app's cleartext UserDefaults plist. Items are stored
+/// `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`: readable only while the
+/// device is unlocked and never carried off the device in a backup or to a
+/// new device.
+private enum KeychainStore {
+    private static let service = Bundle.main.bundleIdentifier ?? "InsiderGeofence"
+
+    private static func baseQuery(_ key: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+        ]
+    }
+
+    static func read(_ key: String) -> String? {
+        var query = baseQuery(key)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let string = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return string
+    }
+
+    static func write(_ value: String, for key: String) {
+        // An empty value means "no token set" — remove the item rather than
+        // storing a blank secret, mirroring how a cleared field used to leave
+        // an empty string in UserDefaults.
+        guard !value.isEmpty else {
+            SecItemDelete(baseQuery(key) as CFDictionary)
+            return
+        }
+        let data = Data(value.utf8)
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        let status = SecItemUpdate(baseQuery(key) as CFDictionary,
+                                   attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var insert = baseQuery(key)
+            insert[kSecValueData as String] = data
+            insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            SecItemAdd(insert as CFDictionary, nil)
+        }
+    }
+
+    /// One-time move of a secret an earlier build wrote to cleartext
+    /// UserDefaults: copy it into the Keychain and delete the plaintext copy so
+    /// it no longer sits at rest in the app container.
+    static func migrateFromDefaults(_ key: String) -> String? {
+        guard let legacy = UserDefaults.standard.string(forKey: key),
+              !legacy.isEmpty else { return nil }
+        write(legacy, for: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        return legacy
+    }
+}
+
+/// Keychain-backed drop-in for `@AppStorage` for a single secret string.
+///
+/// Exposes the same surface the settings field relies on — a plain `String`
+/// wrapped value and a `Binding<String>` projected value — and, being a
+/// `DynamicProperty` backed by `@State`, refreshes the view on change just as
+/// `@AppStorage` does. The value lives only in the Keychain, never in
+/// UserDefaults.
+@propertyWrapper
+private struct KeychainStorage: DynamicProperty {
+    private let key: String
+    @State private var value: String
+
+    init(wrappedValue defaultValue: String, _ key: String) {
+        self.key = key
+        let stored = KeychainStore.read(key)
+            ?? KeychainStore.migrateFromDefaults(key)
+        _value = State(initialValue: stored ?? defaultValue)
+    }
+
+    var wrappedValue: String {
+        get { value }
+        nonmutating set {
+            value = newValue
+            KeychainStore.write(newValue, for: key)
+        }
+    }
+
+    var projectedValue: Binding<String> {
+        Binding(get: { wrappedValue }, set: { wrappedValue = $0 })
+    }
+}
+
 struct ContentView: View {
     @StateObject private var tracker = LocationTracker()
 
@@ -124,7 +225,10 @@ struct ContentView: View {
     #else
     @AppStorage("helperHost") private var helperHost: String = ""
     #endif
-    @AppStorage("helperToken") private var helperToken: String = ""
+    // The helper bearer token is a credential, so it lives in the Keychain
+    // rather than the cleartext UserDefaults plist that backs @AppStorage.
+    // Same read/write surface as before: `helperToken` and `$helperToken`.
+    @KeychainStorage("helperToken") private var helperToken: String = ""
     @AppStorage("partnerBundleID") private var partnerBundleID: String = "com.useinsider.mobile-ios"
     /// Which Insider panel the zones are pulled from. Typed in the picker.
     @AppStorage("insiderPartner") private var partnerName: String = defaultPartner
