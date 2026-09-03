@@ -10,15 +10,19 @@ pymobiledevice3 is installed). When the position first crosses into the
 geofence zone — a circle of the given radius around the end location — it
 logs the entry and exposes it on /status for the app to display.
 
-Run it with:  python3 geofence_panel.py          (loopback only)
-              python3 geofence_panel.py --lan    (also reachable from the LAN,
-                                                  needed for a physical iPhone)
+Run it with:  python3 geofence_panel.py                 (loopback only)
+              python3 geofence_panel.py --lan --insecure (also reachable from
+                                                  the LAN; needed for a physical
+                                                  iPhone — read the cleartext
+                                                  caveat below before using it)
 Stop it with: Ctrl+C
 
 Security model
 --------------
 * Binds loopback only (127.0.0.1 and ::1) unless --lan is passed. Simulator
-  work never needs --lan.
+  work never needs --lan. Because --lan exposes the token in cleartext (see the
+  caveat), it does nothing on its own: you must also pass --insecure to
+  acknowledge that and actually bind a routable interface.
 * Every request must carry the shared token in the X-Geofence-Token header.
   The token lives in .geofence_token (gitignored, mode 600) and is printed at
   startup; type it into the app once. Requiring a *custom* header also forces
@@ -28,9 +32,17 @@ Security model
   out, so a single request cannot exhaust memory, threads or CPU. Distance
   itself is not limited — long routes are compressed, see route_steps().
 
-Caveat: traffic is plain HTTP. With --lan, anyone sniffing that network can
-read the coordinates you send — including your real position if you use the
-"Go to original location" button. Avoid --lan on untrusted Wi-Fi.
+Caveat: traffic is plain HTTP, with no TLS. On loopback that never leaves the
+machine, but --lan puts everything on the wire in cleartext — not only the
+coordinates you send (including your real position from "Go to original
+location"), but the X-Geofence-Token itself. Anyone on-path can sniff that
+token and replay it to reach every endpoint: POST /update, /stop, /pause,
+/resume, and POST /reset-app (which uninstalls and reinstalls app bundles) —
+i.e. full control of this helper, not just a coordinate leak. That is why --lan
+alone will not bind a routable interface; you must add --insecure to accept the
+exposure, and you should rotate the token (delete .geofence_token or set a new
+GEOFENCE_TOKEN) after any use on an untrusted network. The safer option is to
+stay loopback-only and tunnel device traffic over USB/SSH.
 """
 
 import functools
@@ -69,7 +81,14 @@ MAX_BODY_BYTES = 8 * 1024
 MAX_STEPS = 600           # bounds memory/CPU per request; see route_steps()
 MAX_RADIUS_M = 100_000
 SOCKET_TIMEOUT = 10       # seconds; stops slow clients from pinning threads
-LAN_MODE = "--lan" in sys.argv
+LAN_REQUESTED = "--lan" in sys.argv
+# --lan puts the static bearer token on a routable interface in cleartext (no
+# TLS), so binding the LAN is gated behind a second, explicit acknowledgement
+# rather than happening from one innocuous-looking flag. LAN_MODE stays False —
+# loopback only — until both flags are present; main() refuses to start on
+# --lan without --insecure. See the "Security model" note above.
+LAN_ACKNOWLEDGED = "--insecure" in sys.argv
+LAN_MODE = LAN_REQUESTED and LAN_ACKNOWLEDGED
 
 GPX_TEMPLATE = """<?xml version="1.0"?>
 <gpx version="1.1" creator="geofence_panel">
@@ -768,6 +787,27 @@ def make_server(addr):
 
 
 def main():
+    if LAN_REQUESTED and not LAN_ACKNOWLEDGED:
+        # --lan would bind a routable interface, but this helper speaks plain
+        # HTTP with no TLS, so the X-Geofence-Token bearer credential — not just
+        # the coordinates — would travel the LAN in cleartext for any on-path
+        # attacker to sniff and replay for full control of the helper. Make LAN
+        # exposure an explicit, informed choice instead of a one-flag default.
+        sys.exit(
+            "Refusing --lan without --insecure.\n"
+            "  --lan binds a routable interface, and this helper speaks plain "
+            "HTTP with no TLS. That puts the X-Geofence-Token (not just the "
+            "coordinates) on the LAN in cleartext, where anyone on-path can "
+            "sniff it and replay it to reach every endpoint — /update, /stop, "
+            "/pause, /resume and /reset-app (which reinstalls app bundles): "
+            "full control of this helper.\n"
+            "  Safer: stay loopback-only and tunnel device traffic over "
+            "USB/SSH.\n"
+            "  To accept that exposure anyway, re-run with:\n"
+            "      python3 geofence_panel.py --lan --insecure\n"
+            "  and rotate the token afterwards (delete .geofence_token or set a "
+            "new GEOFENCE_TOKEN)."
+        )
     binds = ["0.0.0.0", "::"] if LAN_MODE else ["127.0.0.1", "::1"]
     print(f"Geofence panel helper on http://{binds[0]}:{PORT} "
           f"(also {binds[1]})")
@@ -783,15 +823,18 @@ def main():
         print(f"Device: {DEVICE_PYTHON} (Python {label}) — too old for iOS 18.2+.")
         print("  iOS 18.2+ dropped QUIC, so the tunnel needs pymobiledevice3's")
         print("  TCP path, which wants Python 3.13+. Install one and point at it:")
-        print("    GEOFENCE_PYTHON=/opt/homebrew/bin/python3.13 python3 geofence_panel.py --lan")
+        print("    GEOFENCE_PYTHON=/opt/homebrew/bin/python3.13 python3 geofence_panel.py --lan --insecure")
     print()
     print(f"  TOKEN: {TOKEN}")
     print("  Paste this into the app's Token field (saved in .geofence_token).")
     if LAN_MODE:
-        print("  --lan: reachable from your local network. Traffic is plain "
-              "HTTP, so avoid this on untrusted Wi-Fi.")
+        print("  --lan --insecure: reachable from your local network over plain "
+              "HTTP. The TOKEN above is sent in the clear and can be sniffed and "
+              "replayed for full control of this helper — use only on a trusted "
+              "network, and rotate the token afterwards.")
     else:
-        print("  Loopback only. Pass --lan to test on a physical iPhone.")
+        print("  Loopback only. Pass --lan --insecure to test on a physical "
+              "iPhone (sends the token in cleartext — read the startup caveat).")
     print()
     print("Waiting for 'Update geofence' from the app... (Ctrl+C to stop)")
     servers = []

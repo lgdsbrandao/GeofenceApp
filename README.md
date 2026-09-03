@@ -81,11 +81,18 @@ Find the UDID with `./.venv/bin/python -m pymobiledevice3 usbmux list`.
 ### 3. The helper
 
 ```bash
-python3 geofence_panel.py --lan
+python3 geofence_panel.py --lan --insecure
 ```
 
-`--lan` is required for a phone; the helper is loopback-only by default. Check
-the banner reads `Device: …/.venv/bin/python (Python 3.13)` with no warning.
+`--lan` is required for a phone; the helper is loopback-only by default. It also
+speaks plain HTTP with no TLS, so on the LAN the `X-Geofence-Token` — not just
+the coordinates — travels in cleartext, and anyone on-path can sniff it and
+replay it to drive every endpoint (including `POST /reset-app`). Because of
+that, `--lan` refuses to bind a routable interface unless you add `--insecure`
+to acknowledge the exposure. Use it only on a trusted network, prefer tunnelling
+device traffic over USB/SSH when you can, and rotate the token afterwards
+(delete `.geofence_token` or set a new `GEOFENCE_TOKEN`). Check the banner reads
+`Device: …/.venv/bin/python (Python 3.13)` with no warning.
 
 ### 4. The app
 
