@@ -45,6 +45,25 @@ struct InsiderZone: Decodable, Identifiable {
     let longitude: Double
     let radius: Double
 
+    /// A geofence cannot sensibly be larger than the planet. Capping the radius
+    /// also keeps `startDistance` — and therefore `Int(startDistance)` — far
+    /// inside Int's range, so the conversion can never trap.
+    static let maxRadiusMeters = 40_075_000.0   // Earth's equatorial circumference
+
+    /// Whether this zone decoded to usable geometry.
+    ///
+    /// `latitude`, `longitude` and `radius` come verbatim from the remote API
+    /// with no bounds checking at decode, yet they flow into arithmetic such as
+    /// `Int(startDistance)` that traps (fatal, uncatchable) on a non-finite or
+    /// out-of-range value. A remote value must not be able to crash the app, so
+    /// a zone that fails this check is dropped before it can reach any sink or
+    /// linger in the selectable list.
+    var isValid: Bool {
+        latitude.isFinite && (-90.0...90.0).contains(latitude)
+            && longitude.isFinite && (-180.0...180.0).contains(longitude)
+            && radius.isFinite && radius > 0 && radius <= Self.maxRadiusMeters
+    }
+
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
@@ -871,7 +890,11 @@ struct ContentView: View {
                     showStatus("Unexpected response from the geofence API.", isError: true)
                     return
                 }
-                zones = decoded.geofences
+                // Drop any zone whose coordinates or radius are non-finite or
+                // out of range before it enters the list: such values are
+                // decoded verbatim from the API and would otherwise trap when
+                // force-converted (e.g. `Int(zone.startDistance)`) on selection.
+                zones = decoded.geofences.filter { $0.isValid }
                 loadedPartner = partner
                 if zones.isEmpty {
                     showStatus("No geofences configured for \(partner).", isError: false)
