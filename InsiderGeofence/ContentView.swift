@@ -8,6 +8,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import Security
 
 /// Tracks two different things, and the difference matters.
 ///
@@ -43,6 +44,25 @@ struct InsiderZone: Decodable, Identifiable {
     let latitude: Double
     let longitude: Double
     let radius: Double
+
+    /// A geofence cannot sensibly be larger than the planet. Capping the radius
+    /// also keeps `startDistance` — and therefore `Int(startDistance)` — far
+    /// inside Int's range, so the conversion can never trap.
+    static let maxRadiusMeters = 40_075_000.0   // Earth's equatorial circumference
+
+    /// Whether this zone decoded to usable geometry.
+    ///
+    /// `latitude`, `longitude` and `radius` come verbatim from the remote API
+    /// with no bounds checking at decode, yet they flow into arithmetic such as
+    /// `Int(startDistance)` that traps (fatal, uncatchable) on a non-finite or
+    /// out-of-range value. A remote value must not be able to crash the app, so
+    /// a zone that fails this check is dropped before it can reach any sink or
+    /// linger in the selectable list.
+    var isValid: Bool {
+        latitude.isFinite && (-90.0...90.0).contains(latitude)
+            && longitude.isFinite && (-180.0...180.0).contains(longitude)
+            && radius.isFinite && radius > 0 && radius <= Self.maxRadiusMeters
+    }
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -116,6 +136,106 @@ extension View {
     }
 }
 
+/// A tiny wrapper over the Keychain for a single string secret.
+///
+/// The helper bearer token is a credential, so it is kept in the Keychain
+/// rather than the app's cleartext UserDefaults plist. Items are stored
+/// `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`: readable only while the
+/// device is unlocked and never carried off the device in a backup or to a
+/// new device.
+private enum KeychainStore {
+    private static let service = Bundle.main.bundleIdentifier ?? "InsiderGeofence"
+
+    private static func baseQuery(_ key: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+        ]
+    }
+
+    static func read(_ key: String) -> String? {
+        var query = baseQuery(key)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let string = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return string
+    }
+
+    static func write(_ value: String, for key: String) {
+        // An empty value means "no token set" — remove the item rather than
+        // storing a blank secret, mirroring how a cleared field used to leave
+        // an empty string in UserDefaults.
+        guard !value.isEmpty else {
+            SecItemDelete(baseQuery(key) as CFDictionary)
+            return
+        }
+        let data = Data(value.utf8)
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        let status = SecItemUpdate(baseQuery(key) as CFDictionary,
+                                   attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var insert = baseQuery(key)
+            insert[kSecValueData as String] = data
+            insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            SecItemAdd(insert as CFDictionary, nil)
+        }
+    }
+
+    /// One-time move of a secret an earlier build wrote to cleartext
+    /// UserDefaults: copy it into the Keychain and delete the plaintext copy so
+    /// it no longer sits at rest in the app container.
+    static func migrateFromDefaults(_ key: String) -> String? {
+        guard let legacy = UserDefaults.standard.string(forKey: key),
+              !legacy.isEmpty else { return nil }
+        write(legacy, for: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        return legacy
+    }
+}
+
+/// Keychain-backed drop-in for `@AppStorage` for a single secret string.
+///
+/// Exposes the same surface the settings field relies on — a plain `String`
+/// wrapped value and a `Binding<String>` projected value — and, being a
+/// `DynamicProperty` backed by `@State`, refreshes the view on change just as
+/// `@AppStorage` does. The value lives only in the Keychain, never in
+/// UserDefaults.
+@propertyWrapper
+private struct KeychainStorage: DynamicProperty {
+    private let key: String
+    @State private var value: String
+
+    init(wrappedValue defaultValue: String, _ key: String) {
+        self.key = key
+        let stored = KeychainStore.read(key)
+            ?? KeychainStore.migrateFromDefaults(key)
+        _value = State(initialValue: stored ?? defaultValue)
+    }
+
+    var wrappedValue: String {
+        get { value }
+        nonmutating set {
+            value = newValue
+            KeychainStore.write(newValue, for: key)
+        }
+    }
+
+    var projectedValue: Binding<String> {
+        Binding(get: { wrappedValue }, set: { wrappedValue = $0 })
+    }
+}
+
 struct ContentView: View {
     @StateObject private var tracker = LocationTracker()
 
@@ -124,7 +244,10 @@ struct ContentView: View {
     #else
     @AppStorage("helperHost") private var helperHost: String = ""
     #endif
-    @AppStorage("helperToken") private var helperToken: String = ""
+    // The helper bearer token is a credential, so it lives in the Keychain
+    // rather than the cleartext UserDefaults plist that backs @AppStorage.
+    // Same read/write surface as before: `helperToken` and `$helperToken`.
+    @KeychainStorage("helperToken") private var helperToken: String = ""
     @AppStorage("partnerBundleID") private var partnerBundleID: String = "com.useinsider.mobile-ios"
     /// Which Insider panel the zones are pulled from. Typed in the picker.
     @AppStorage("insiderPartner") private var partnerName: String = defaultPartner
@@ -767,7 +890,11 @@ struct ContentView: View {
                     showStatus("Unexpected response from the geofence API.", isError: true)
                     return
                 }
-                zones = decoded.geofences
+                // Drop any zone whose coordinates or radius are non-finite or
+                // out of range before it enters the list: such values are
+                // decoded verbatim from the API and would otherwise trap when
+                // force-converted (e.g. `Int(zone.startDistance)`) on selection.
+                zones = decoded.geofences.filter { $0.isValid }
                 loadedPartner = partner
                 if zones.isEmpty {
                     showStatus("No geofences configured for \(partner).", isError: false)
@@ -850,6 +977,27 @@ struct ContentView: View {
         }
     }
 
+    /// Whether `host` names a loopback destination (localhost / 127.0.0.0/8 /
+    /// ::1). The helper speaks only plain HTTP and authenticates with a static
+    /// token it compares verbatim, so that credential cannot be transmitted
+    /// safely to any non-loopback address: an on-path attacker on the LAN would
+    /// read the X-Geofence-Token straight off the cleartext request and could
+    /// then drive privileged helper actions (reset-app, update). On loopback
+    /// the request never leaves the machine, so there is nothing on the wire to
+    /// capture. We therefore only ever attach the credential to loopback hosts.
+    private func isLoopbackHelperHost(_ host: String) -> Bool {
+        var bare = host.trimmingCharacters(in: .whitespaces).lowercased()
+        if bare.hasPrefix("[") && bare.hasSuffix("]") {
+            bare = String(bare.dropFirst().dropLast())   // strip IPv6 brackets
+        }
+        if bare == "localhost" || bare == "::1" { return true }
+        // 127.0.0.0/8 is reserved entirely for loopback.
+        let octets = bare.split(separator: ".", omittingEmptySubsequences: false)
+        return octets.count == 4
+            && String(octets[0]) == "127"
+            && octets.allSatisfy { UInt8($0) != nil }
+    }
+
     /// One place that talks to the helper, so auth and errors behave the same
     /// for every action.
     private func send(path: String, body: [String: Any]?,
@@ -861,6 +1009,20 @@ struct ContentView: View {
         guard !host.isEmpty else {
             showStatus("No Mac helper address set — enter your Mac's IP in Settings.",
                        isError: true)
+            activeSheet = .settings
+            return
+        }
+        // The helper token is a static shared secret sent in the clear over
+        // HTTP. Only a loopback destination keeps it off the wire, so refuse to
+        // send it — and thus the whole privileged request — to any other
+        // address rather than leak a replayable credential to an on-path
+        // attacker. The helper itself only binds loopback unless it is started
+        // with an explicit --lan opt-in.
+        guard isLoopbackHelperHost(host) else {
+            showStatus("The Mac helper can only be reached on this device "
+                       + "(localhost). A LAN address would send the helper "
+                       + "token in the clear — run the app in the Simulator "
+                       + "alongside geofence_panel.py.", isError: true)
             activeSheet = .settings
             return
         }
@@ -915,7 +1077,10 @@ struct ContentView: View {
 
     private func pollStatus() {
         let host = helperHost.trimmingCharacters(in: .whitespaces)
-        guard isRunning, let url = URL(string: "http://\(host):8766/status") else { return }
+        // Same rule as send(): never put the token on the wire to a non-loopback
+        // host, where it could be sniffed and replayed against the helper.
+        guard isRunning, isLoopbackHelperHost(host),
+              let url = URL(string: "http://\(host):8766/status") else { return }
         var request = URLRequest(url: url)
         // Trimmed: pasting a token easily carries a trailing space or
         // newline, and the helper compares it exactly — that lands as a
