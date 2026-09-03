@@ -850,6 +850,27 @@ struct ContentView: View {
         }
     }
 
+    /// Whether `host` names a loopback destination (localhost / 127.0.0.0/8 /
+    /// ::1). The helper speaks only plain HTTP and authenticates with a static
+    /// token it compares verbatim, so that credential cannot be transmitted
+    /// safely to any non-loopback address: an on-path attacker on the LAN would
+    /// read the X-Geofence-Token straight off the cleartext request and could
+    /// then drive privileged helper actions (reset-app, update). On loopback
+    /// the request never leaves the machine, so there is nothing on the wire to
+    /// capture. We therefore only ever attach the credential to loopback hosts.
+    private func isLoopbackHelperHost(_ host: String) -> Bool {
+        var bare = host.trimmingCharacters(in: .whitespaces).lowercased()
+        if bare.hasPrefix("[") && bare.hasSuffix("]") {
+            bare = String(bare.dropFirst().dropLast())   // strip IPv6 brackets
+        }
+        if bare == "localhost" || bare == "::1" { return true }
+        // 127.0.0.0/8 is reserved entirely for loopback.
+        let octets = bare.split(separator: ".", omittingEmptySubsequences: false)
+        return octets.count == 4
+            && String(octets[0]) == "127"
+            && octets.allSatisfy { UInt8($0) != nil }
+    }
+
     /// One place that talks to the helper, so auth and errors behave the same
     /// for every action.
     private func send(path: String, body: [String: Any]?,
@@ -861,6 +882,20 @@ struct ContentView: View {
         guard !host.isEmpty else {
             showStatus("No Mac helper address set — enter your Mac's IP in Settings.",
                        isError: true)
+            activeSheet = .settings
+            return
+        }
+        // The helper token is a static shared secret sent in the clear over
+        // HTTP. Only a loopback destination keeps it off the wire, so refuse to
+        // send it — and thus the whole privileged request — to any other
+        // address rather than leak a replayable credential to an on-path
+        // attacker. The helper itself only binds loopback unless it is started
+        // with an explicit --lan opt-in.
+        guard isLoopbackHelperHost(host) else {
+            showStatus("The Mac helper can only be reached on this device "
+                       + "(localhost). A LAN address would send the helper "
+                       + "token in the clear — run the app in the Simulator "
+                       + "alongside geofence_panel.py.", isError: true)
             activeSheet = .settings
             return
         }
@@ -915,7 +950,10 @@ struct ContentView: View {
 
     private func pollStatus() {
         let host = helperHost.trimmingCharacters(in: .whitespaces)
-        guard isRunning, let url = URL(string: "http://\(host):8766/status") else { return }
+        // Same rule as send(): never put the token on the wire to a non-loopback
+        // host, where it could be sniffed and replayed against the helper.
+        guard isRunning, isLoopbackHelperHost(host),
+              let url = URL(string: "http://\(host):8766/status") else { return }
         var request = URLRequest(url: url)
         // Trimmed: pasting a token easily carries a trailing space or
         // newline, and the helper compares it exactly — that lands as a
