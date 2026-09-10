@@ -107,9 +107,15 @@ Developer Mode on under Settings ▸ Privacy & Security.
 
 ## Running a test
 
-Tap **Choose a geofence**, pick a zone, tap **Walk**. The route builds itself:
-it starts outside the boundary, walks to the centre and returns, so both an
-enter and an exit occur.
+Tap **Choose a geofence**, pick a zone, tap **Walk**. The route builds itself,
+and it is deliberately asymmetric: it starts 50 m outside the boundary, walks
+straight through the centre, and carries on out the far side to roughly 2.5x
+the radius, so both an enter and an exit occur.
+
+The two ends differ because iOS does. Entry fires the moment the boundary is
+crossed, so the approach only needs enough room to be unambiguously outside.
+An *exit* is only confirmed well beyond the fence — about twice the radius —
+so the route has to finish much further out than it began.
 
 Type a different **panel** name in the picker to load another partner's zones.
 Zones come back nearest-first, measured from where the device currently is.
@@ -144,8 +150,15 @@ which reinstalls the partner app from its own binary. This wipes that app's
 local data.
 
 **Use Walk, not Run, for a real trigger.** `locationd` samples a fence roughly
-every 10 seconds; at 10 m/s you cover 100 m between samples and a small zone
-can be crossed entirely between two of them.
+every 10 seconds. Walk is 2.5 m/s, so you cover about 25 m between samples;
+Run is 10 m/s and covers 100 m, enough to cross a small zone entirely between
+two samples. Treat Run as "get me there", not as a fence test.
+
+**If an enter never fires on a physical device**, look at how long the route
+spends outside the fence before crossing it. iOS has to settle on "outside"
+before it can report an entry, and the 50 m approach buys only 20 s at walking
+pace. Everything registers on the Simulator, where the helper computes the
+crossing itself, so this one only shows up on real hardware.
 
 ---
 

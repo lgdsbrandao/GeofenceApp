@@ -16,6 +16,9 @@ import MapKit
 struct ZoneMapView: UIViewRepresentable {
     var zone: InsiderZone?
     var startCoordinate: CLLocationCoordinate2D?
+    /// Where the route finishes. Further out than the start, and on the far
+    /// side, because iOS only confirms an exit well beyond the boundary.
+    var exitCoordinate: CLLocationCoordinate2D?
     /// The device's live position, or nil until the first fix lands.
     var userLocation: CLLocationCoordinate2D?
     /// Bumped whenever the app comes to the foreground. Each new value earns
@@ -79,13 +82,28 @@ struct ZoneMapView: UIViewRepresentable {
             pin.coordinate = start
             pin.title = "Start"
             map.addAnnotation(pin)
-            map.addOverlay(MKPolyline(coordinates: [start, zone.coordinate], count: 2))
+
+            // The route runs in from the start, through the centre, and out
+            // the far side — draw it that way rather than as a there-and-back
+            // line, which would hide where the run actually ends.
+            var line = [start, zone.coordinate]
+            if let exit = exitCoordinate {
+                line.append(exit)
+                let endPin = MKPointAnnotation()
+                endPin.coordinate = exit
+                endPin.title = "End"
+                map.addAnnotation(endPin)
+            }
+            map.addOverlay(MKPolyline(coordinates: line, count: line.count))
         }
 
         // Only recentre when the zone itself changes, so panning is not fought.
         if context.coordinator.shownZoneID != zone.id {
             context.coordinator.shownZoneID = zone.id
-            let span = zone.radius * 4
+            // Fit the whole route, which now reaches further out one side
+            // than the other, plus a margin so the pins are not on the edge.
+            let reach = max(zone.startDistance, zone.exitDistance)
+            let span = max(reach * 2.6, zone.radius * 4)
             map.setRegion(MKCoordinateRegion(center: zone.coordinate,
                                              latitudinalMeters: span,
                                              longitudinalMeters: span),
@@ -122,9 +140,12 @@ struct ZoneMapView: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             guard !(annotation is MKUserLocation) else { return nil }
             let view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: "zone")
-            let isStart = annotation.title == "Start"
-            view.markerTintColor = isStart ? .insiderHitPink : .insiderPrimary
-            view.glyphImage = UIImage(systemName: isStart ? "figure.walk" : "mappin")
+            let title = annotation.title ?? nil
+            let isStart = title == "Start"
+            let isEnd = title == "End"
+            view.markerTintColor = (isStart || isEnd) ? .insiderHitPink : .insiderPrimary
+            view.glyphImage = UIImage(systemName: isStart ? "figure.walk"
+                                      : isEnd ? "flag.checkered" : "mappin")
             view.displayPriority = .required
             return view
         }

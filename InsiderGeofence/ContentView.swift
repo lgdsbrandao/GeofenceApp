@@ -78,16 +78,30 @@ struct InsiderZone: Decodable, Identifiable {
 
     /// Where a test run begins and ends.
     ///
-    /// Entry fires as soon as the boundary is crossed, but iOS only confirms
-    /// an *exit* well beyond it: measured at 417 m leaving a 200 m fence,
-    /// roughly twice the radius. Starting — and returning to — 2.5x the radius
-    /// clears that hysteresis so the exit actually fires. The 300 m floor
-    /// covers small zones, where the buffer does not scale down.
-    var startDistance: Double { max(radius * 2.5, radius + 300) }
+    /// The two ends of a round trip are not symmetric. Entry fires as soon as
+    /// the boundary is crossed, so the approach only needs enough room outside
+    /// the fence to be unambiguously outside it — 50 m. Leaving is the awkward
+    /// half: iOS confirms an *exit* only well beyond the boundary, measured at
+    /// 417 m leaving a 200 m fence, roughly twice the radius. So the route ends
+    /// further out than it began.
+    static let approachMargin = 50.0
+    var startDistance: Double { radius + Self.approachMargin }
+
+    /// Where the route finishes: 2.5x the radius clears the exit hysteresis,
+    /// with a 300 m floor for small zones, where the buffer does not scale down.
+    var exitDistance: Double { max(radius * 2.5, radius + 300) }
 
     var startCoordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(
             latitude: latitude + startDistance / 111_320.0,
+            longitude: longitude)
+    }
+
+    /// The finish, placed opposite the start so the device walks straight
+    /// through the zone and out the far side rather than doubling back.
+    var exitCoordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(
+            latitude: latitude - exitDistance / 111_320.0,
             longitude: longitude)
     }
 }
@@ -105,7 +119,7 @@ private enum PanelSheet: Int, Identifiable {
     var id: Int { rawValue }
 }
 
-private let walkSpeedMps = 1.4
+private let walkSpeedMps = 2.5
 private let runSpeedMps = 10.0
 
 /// Translucent chrome for the panels floating over the map.
@@ -187,6 +201,7 @@ struct ContentView: View {
         ZStack {
             ZoneMapView(zone: selectedZone,
                         startCoordinate: selectedZone?.startCoordinate,
+                        exitCoordinate: selectedZone?.exitCoordinate,
                         userLocation: tracker.current,
                         recenterToken: recenterToken)
                 .ignoresSafeArea()
@@ -231,7 +246,7 @@ struct ContentView: View {
                     .foregroundColor(.primary)
                 Text(selectedZone == nil
                      ? "Pick a zone to test"
-                     : "In and back out to fire enter + exit")
+                     : "Straight through the zone to fire enter + exit")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -313,8 +328,8 @@ struct ContentView: View {
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     Text(selectedZone.map {
-                            String(format: "r %.0f m · start %.0f m out · in and back",
-                                   $0.radius, $0.startDistance)
+                            String(format: "r %.0f m · in from %.0f m · out to %.0f m",
+                                   $0.radius, $0.startDistance, $0.exitDistance)
                          } ?? "Zones from \(partnerName.isEmpty ? defaultPartner : partnerName)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -758,7 +773,7 @@ struct ContentView: View {
         exited = false
         metresFromCentre = nil
         activeSheet = nil
-        showStatus("\(zone.identifier) ready — \(Int(zone.startDistance)) m out, in and back.",
+        showStatus("\(zone.identifier) ready — in from \(Int(zone.startDistance)) m, out to \(Int(zone.exitDistance)) m.",
                    isError: false)
     }
 
@@ -833,6 +848,8 @@ struct ContentView: View {
             "radius": zone.radius,
             "speed": running ? runSpeedMps : walkSpeedMps,
             "return_to_start": true,
+            "exit_lat": zone.exitCoordinate.latitude,
+            "exit_lon": zone.exitCoordinate.longitude,
         ]) { json in
             isRunning = true
             isPaused = false
