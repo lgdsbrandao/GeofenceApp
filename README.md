@@ -164,8 +164,16 @@ All require the `X-Geofence-Token` header. `POST /update` starts a route,
 hold and continue it, `POST /stop` clears the simulated location, and
 `POST /reset-app` reinstalls a partner app to clear its region registrations.
 
-## A note on `update_fake_route_here.gpx`
+## Where the Simulator starts
 
-It is a tracked file that the helper **rewrites on every run**, so it picks up
-whatever coordinates were last used — including a real position if you use
-"Go to original location". Check it before committing.
+`update_fake_route_here.gpx` holds one waypoint, and the scheme points its
+location scenario at it — so that coordinate is where the device stands when
+the app launches. It ships set to Jardim Marajoara, São Paulo. Edit the
+coordinate to start somewhere else.
+
+The helper used to write its route into this same file, which meant every
+launch replayed the last test and left you parked wherever it finished. It now
+writes to `route_preview.gpx`, which is untracked, and drives the Simulator
+through `simctl` instead. Two consequences worth knowing: a test run can no
+longer move your start location, and a real position can no longer end up in a
+commit by way of "Go to original location".

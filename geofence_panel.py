@@ -56,7 +56,11 @@ print = functools.partial(print, flush=True)
 
 HERE = Path(__file__).resolve().parent
 PORT = 8766
-GPX_PATH = HERE / "update_fake_route_here.gpx"
+# The route preview the helper writes on each run. Deliberately NOT
+# update_fake_route_here.gpx: the scheme launches the Simulator at that
+# file, so writing routes there left every launch parked wherever the
+# last test finished.
+GPX_PATH = HERE / "route_preview.gpx"
 DEVICE_GPX_PATH = HERE / "device_route.gpx"
 DEVICE_PLAY_LOG = HERE / "device_play.log"
 TOKEN_PATH = HERE / ".geofence_token"

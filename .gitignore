@@ -22,3 +22,4 @@ LocationMovement.xcodeproj/
 
 # Local virtualenv holding a Python 3.13 pymobiledevice3 for the device path
 .venv/
+route_preview.gpx
