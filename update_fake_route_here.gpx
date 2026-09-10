@@ -1,9 +1,17 @@
 <?xml version="1.0"?>
-<gpx version="1.1" creator="geofence_panel">
-<wpt lat="-23.639122444125043" lon="-46.7204767">
-    <time>2026-08-26T04:00:40Z</time>
-</wpt>
-<wpt lat="-23.643614" lon="-46.7204767">
-    <time>2026-08-26T04:01:29Z</time>
+<!--
+  Where the Simulator starts.
+
+  The scheme points its location scenario at this file, so whatever is here is
+  where the device stands when the app launches. One waypoint, so it is a fixed
+  position rather than a route. Edit the coordinate to move your start.
+
+  The helper no longer writes here — it drives the Simulator through simctl and
+  writes its route preview to the untracked route_preview.gpx, so a test run can
+  no longer leave you parked wherever it happened to finish.
+-->
+<gpx version="1.1" creator="InsiderGeofence">
+<wpt lat="-23.657781" lon="-46.687219">
+    <name>Jardim Marajoara, São Paulo</name>
 </wpt>
 </gpx>
