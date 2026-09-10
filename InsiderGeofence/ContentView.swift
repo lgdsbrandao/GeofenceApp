@@ -80,11 +80,12 @@ struct InsiderZone: Decodable, Identifiable {
     ///
     /// The two ends of a round trip are not symmetric. Entry fires as soon as
     /// the boundary is crossed, so the approach only needs enough room outside
-    /// the fence to be unambiguously outside it — 50 m. Leaving is the awkward
+    /// the fence to be unambiguously outside it, and enough time outside for
+    /// iOS to settle on that before the crossing — 100 m. Leaving is the awkward
     /// half: iOS confirms an *exit* only well beyond the boundary, measured at
     /// 417 m leaving a 200 m fence, roughly twice the radius. So the route ends
     /// further out than it began.
-    static let approachMargin = 50.0
+    static let approachMargin = 100.0
     var startDistance: Double { radius + Self.approachMargin }
 
     /// Where the route finishes: 2.5x the radius clears the exit hysteresis,

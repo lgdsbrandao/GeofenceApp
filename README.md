@@ -108,7 +108,7 @@ Developer Mode on under Settings ▸ Privacy & Security.
 ## Running a test
 
 Tap **Choose a geofence**, pick a zone, tap **Walk**. The route builds itself,
-and it is deliberately asymmetric: it starts 50 m outside the boundary, walks
+and it is deliberately asymmetric: it starts 100 m outside the boundary, walks
 straight through the centre, and carries on out the far side to roughly 2.5x
 the radius, so both an enter and an exit occur.
 
@@ -156,7 +156,7 @@ two samples. Treat Run as "get me there", not as a fence test.
 
 **If an enter never fires on a physical device**, look at how long the route
 spends outside the fence before crossing it. iOS has to settle on "outside"
-before it can report an entry, and the 50 m approach buys only 20 s at walking
+before it can report an entry, and the 100 m approach buys 40 s at walking
 pace. Everything registers on the Simulator, where the helper computes the
 crossing itself, so this one only shows up on real hardware.
 
