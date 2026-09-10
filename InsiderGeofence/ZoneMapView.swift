@@ -16,6 +16,18 @@ import MapKit
 struct ZoneMapView: UIViewRepresentable {
     var zone: InsiderZone?
     var startCoordinate: CLLocationCoordinate2D?
+    /// The device's live position, or nil until the first fix lands.
+    var userLocation: CLLocationCoordinate2D?
+    /// Bumped whenever the app comes to the foreground. Each new value earns
+    /// exactly one recentre on the user, so opening the app always lands on
+    /// "where I am" without the map being yanked back mid-pan afterwards.
+    var recenterToken: Int = 0
+
+    /// How much ground the opening view covers, in metres.
+    ///
+    /// Wide enough to place yourself on a street grid, tight enough that a
+    /// typical fence (50–500 m) would be visible if you were standing in one.
+    private static let openingSpan = 800.0
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
@@ -32,11 +44,28 @@ struct ZoneMapView: UIViewRepresentable {
         map.removeAnnotations(map.annotations.filter { !($0 is MKUserLocation) })
 
         guard let zone = zone else {
-            map.userTrackingMode = .follow
+            // No zone yet: the map belongs to the user's own position.
+            //
+            // `.follow` alone is not enough to promise it. It centres when a
+            // fix first arrives, but does nothing for a map that already has a
+            // region — coming back from a zone, or from the background — and
+            // the user cancels it the moment they pan. So centre explicitly,
+            // once per token, and only re-arm `.follow` at that same moment.
             context.coordinator.shownZoneID = nil
+            if let here = userLocation,
+               context.coordinator.centredForToken != recenterToken {
+                context.coordinator.centredForToken = recenterToken
+                map.setRegion(MKCoordinateRegion(center: here,
+                                                 latitudinalMeters: Self.openingSpan,
+                                                 longitudinalMeters: Self.openingSpan),
+                              animated: true)
+                map.userTrackingMode = .follow
+            }
             return
         }
         map.userTrackingMode = .none
+        // Leaving the zone behind should centre on the user again.
+        context.coordinator.centredForToken = nil
 
         map.addOverlay(MKCircle(center: zone.coordinate, radius: zone.radius))
 
@@ -68,6 +97,9 @@ struct ZoneMapView: UIViewRepresentable {
 
     class Coordinator: NSObject, MKMapViewDelegate {
         var shownZoneID: Int?
+        /// The `recenterToken` this map has already centred for, so each
+        /// foreground earns one recentre and no more.
+        var centredForToken: Int?
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let circle = overlay as? MKCircle {
