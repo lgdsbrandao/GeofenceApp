@@ -429,14 +429,22 @@ def walk(lat1, lon1, lat2, lon2, radius, speed, return_to_start, cancel,
           + (" (out and back)" if return_to_start else ""))
 
     turnaround = len(route_points(lat1, lon1, lat2, lon2, speed)) - 1
+    # Tick on a fixed cadence rather than sleeping a whole tick *after* the
+    # work. Applying a position costs ~0.15 s, which the old loop added to
+    # every sleep — so a 2.5 m/s route actually advanced at about 2.2, and the
+    # error grew with the length of the route.
+    next_tick = time.monotonic()
     for i, (lat, lon) in enumerate(points):
         if cancel.is_set():
             print("  Walk cancelled (new route received).")
             return
-        while PAUSE.is_set():
-            if cancel.is_set():
-                return
-            time.sleep(0.2)
+        if PAUSE.is_set():
+            while PAUSE.is_set():
+                if cancel.is_set():
+                    return
+                time.sleep(0.2)
+            # Resume on a fresh cadence: a pause is not time to make up.
+            next_tick = time.monotonic()
 
         remaining = haversine_m(lat, lon, lat2, lon2)
         apply_position(lat, lon)
@@ -453,7 +461,8 @@ def walk(lat1, lon1, lat2, lon2, radius, speed, return_to_start, cancel,
                 print(f"  <<< EXITED ZONE at {lat:.6f}, {lon:.6f} "
                       f"({remaining:.0f}m from centre) >>>")
         if i < len(points) - 1:
-            time.sleep(TICK_SECONDS)
+            next_tick += TICK_SECONDS
+            time.sleep(max(0.0, next_tick - time.monotonic()))
 
     with STATE.lock:
         STATE.walking = False
@@ -740,12 +749,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         steps = route_steps(total, speed)
-        duration = steps * TICK_SECONDS
-        effective = total / duration if duration else 0.0
+        leg_duration = steps * TICK_SECONDS
+        effective = total / leg_duration if leg_duration else 0.0
+        # The way back is no longer the way in, so the run cannot be timed as
+        # "there, doubled". Count the points that will actually be walked.
+        route_duration = max(len(route_points(lat1, lon1, lat2, lon2, speed,
+                                              return_to_start, exit_point)) - 1,
+                             1) * TICK_SECONDS
         mode = "running" if speed > WALK_SPEED else "walking"
-        write_gpx(lat1, lon1, lat2, lon2, duration)
+        write_gpx(lat1, lon1, lat2, lon2, leg_duration)
         print(f"  GPX updated: {lat1},{lon1} -> {lat2},{lon2} "
-              f"({total:.0f}m, ~{duration:.0f}s {mode} at {effective:.1f} m/s, "
+              f"({total:.0f}m in, ~{route_duration:.0f}s {mode} total at "
+              f"{effective:.1f} m/s, "
               f"zone {radius:.0f}m)")
         start_walk(lat1, lon1, lat2, lon2, radius, speed, return_to_start,
                    exit_point)
@@ -758,13 +773,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {
             "ok": True,
             "distance_m": round(total),
-            "duration_s": round(duration * (2 if return_to_start else 1)),
+            "duration_s": round(route_duration),
             "return_to_start": return_to_start,
             "speed_mps": round(effective, 2),
-            "applied": (f"{mode} {total / 1000:.0f}km, ~{duration:.0f}s "
+            "applied": (f"{mode} {total / 1000:.0f}km, ~{route_duration:.0f}s "
                         f"at {effective:.0f} m/s (compressed)"
                         if effective > speed * 1.05 else
-                        f"{mode} {total:.0f}m, ~{duration:.0f}s"),
+                        f"{mode} {total:.0f}m, ~{route_duration:.0f}s"),
         })
 
 
