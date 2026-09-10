@@ -27,6 +27,34 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
         manager.desiredAccuracy = kCLLocationAccuracyBest
         manager.requestWhenInUseAuthorization()
         manager.startUpdatingLocation()   // stays on, so `current` keeps up
+        seedFromLastKnown()
+    }
+
+    /// Show the map something immediately.
+    ///
+    /// A cold start can take seconds to produce a fresh fix, and on a phone
+    /// that is indoors it can take longer. CoreLocation usually already holds
+    /// the last one, which is close enough to open the map on and is replaced
+    /// by the real fix moments later. `original` is deliberately left alone —
+    /// it is what "go to my real location" restores, so it may only ever come
+    /// from a fix this session actually received, never a cached one.
+    private func seedFromLastKnown() {
+        if current == nil, let known = manager.location?.coordinate {
+            current = known
+        }
+    }
+
+    /// Permission can arrive long after launch — the first-run prompt, or a
+    /// trip to Settings after a denial. Start over when it does, so the app
+    /// does not sit locationless until it is relaunched.
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.startUpdatingLocation()
+            seedFromLastKnown()
+        default:
+            break
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -150,10 +178,17 @@ struct ContentView: View {
 
     @State private var authFailed = false
 
+    /// Drives "open on my location": every trip to the foreground hands the
+    /// map a new token, and the map spends it on one recentre.
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var recenterToken = 0
+
     var body: some View {
         ZStack {
             ZoneMapView(zone: selectedZone,
-                        startCoordinate: selectedZone?.startCoordinate)
+                        startCoordinate: selectedZone?.startCoordinate,
+                        userLocation: tracker.current,
+                        recenterToken: recenterToken)
                 .ignoresSafeArea()
 
             VStack(spacing: 10) {
@@ -174,6 +209,11 @@ struct ContentView: View {
             case .zones: zoneList
             case .settings: settingsSheet
             }
+        }
+        .onChange(of: scenePhase) { phase in
+            // Opening the app — cold or from the background — puts the map
+            // back on the device's own position.
+            if phase == .active { recenterToken += 1 }
         }
     }
 
