@@ -134,6 +134,11 @@ struct ContentView: View {
     @State private var isLoadingZones = false
     /// The panel the zones on screen actually came from.
     @State private var loadedPartner = ""
+    /// The coordinate the zones on screen were fetched with, or nil if there
+    /// was no fix at the time. The API returns the nearest 20 to whatever it
+    /// is given, so a fix-less fetch comes back with the wrong *set* of zones,
+    /// not merely the wrong order — worth re-doing once a real fix lands.
+    @State private var loadedFromFix = false
     @State private var copiedCoordinates = false
     @State private var activeSheet: PanelSheet?
 
@@ -520,7 +525,9 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 28)
                     } else {
-                        Text("\(zones.count) zones · nearest first, from where the device is now")
+                        Text(loadedFromFix
+                             ? "\(zones.count) zones · nearest first, from where the device is now"
+                             : "\(zones.count) zones nearest 0,0 — no location fix yet")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -536,8 +543,18 @@ struct ContentView: View {
                 .padding(.vertical, 12)
             }
             .onAppear {
-                // Load on open, and reload if the panel was changed since.
-                if zones.isEmpty || loadedPartner != partnerName.trimmingCharacters(in: .whitespaces) {
+                // Load on open; reload if the panel changed, or if what is on
+                // screen was fetched without a fix and we have one now.
+                if zones.isEmpty
+                    || loadedPartner != partnerName.trimmingCharacters(in: .whitespaces)
+                    || (!loadedFromFix && tracker.current != nil) {
+                    fetchZones()
+                }
+            }
+            .onChange(of: tracker.current?.latitude) { _ in
+                // The first fix often lands a moment after the sheet opens.
+                // Whatever came back before it is the wrong set of zones.
+                if !loadedFromFix && tracker.current != nil && !isLoadingZones {
                     fetchZones()
                 }
             }
@@ -769,11 +786,12 @@ struct ContentView: View {
                 }
                 zones = decoded.geofences
                 loadedPartner = partner
+                loadedFromFix = sortedByDistance
                 if zones.isEmpty {
                     showStatus("No geofences configured for \(partner).", isError: false)
                 } else if !sortedByDistance {
-                    showStatus("No location fix yet, so the list is not sorted by distance. "
-                               + "Give the device a location to sort by proximity.",
+                    showStatus("No location fix yet — these are the zones nearest 0,0, "
+                               + "not nearest you. Reloading as soon as a fix arrives.",
                                isError: false)
                 }
             }
